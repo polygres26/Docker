@@ -214,6 +214,34 @@ promotions Warp performs; in `follow` mode whoever promoted is responsible for t
   The old primary is not repointed; it must be rebuilt as a replica before it can rejoin. Oracle and SQL
   Server are follow-only and never repointed by Warp.
 
+### Planned switchover
+
+`POST /api/failover/{backend}/switchover` with `{"target": "<replica url>"}` (admin role) swaps the primary
+on purpose, without losing a committed transaction. Postgres and MySQL only; allowed in `follow` or
+`promote` mode (not `off`).
+
+1. Preconditions: the primary is writable, the target is a configured, reachable, read-only replica.
+   If the config database is reachable Warp takes the failover lease for the duration, so no other
+   instance's automatic promotion can start a second writer.
+2. **Freeze** the primary. Postgres: `default_transaction_read_only=on` plus terminating other client
+   sessions (superuser needed). MySQL: `super_read_only=ON` (needs `gtid_mode=ON`).
+3. **Catch up**: wait (`WARP_SWITCHOVER_CATCHUP_SECONDS`, 30) until the target replayed the primary's final
+   WAL position (Postgres) or executed its final GTID set (MySQL).
+4. **Promote** the target, switch the backend to it (one `warp_config` version), repoint the other
+   replicas, and turn the old primary into a replica where possible.
+
+Any failure before the promotion re-enables writes on the old primary and changes nothing. If the target
+is promoted but does not report itself writable, the old primary is deliberately left frozen (never two
+writers) and the result says so.
+
+Limits: writes fail for the seconds the swap takes (clients retry; Warp does not hold and replay them).
+Postgres' freeze can be undone by a client that reconnects and explicitly sets `transaction_read_only=off`,
+though the catch-up check still guards the target. **Postgres: the old primary is left read-only, not
+replicating**: making a running primary a standby needs a restart with `standby.signal` (and usually
+`pg_rewind`) on the host, which Warp cannot do over SQL. **MySQL: the old primary becomes a GTID replica
+using the backend's own user/password as the replication account** (so that user needs REPLICATION SLAVE;
+`GET_SOURCE_PUBLIC_KEY=1` is used so caching_sha2 works without TLS). Oracle and SQL Server are not supported.
+
 Without external fencing the majority rule is the only protection against promoting while the old
 primary is merely partitioned away from Warp but still serving others. Configure
 `WARP_FAILOVER_FENCE_COMMAND` if that can happen in your network.
@@ -234,7 +262,7 @@ primary is merely partitioned away from Warp but still serving others. Configure
 
 All live tests are opt-in and skipped unless their environment is set; they run real servers, not mocks.
 
-- **Postgres / MySQL:** `ReplicaReadRoutingLiveTest`, `FailoverFollowLiveTest`, `FailoverPromoteLiveTest`,
+- **Postgres / MySQL:** `SwitchoverLiveTest` (`WARP_TEST_SWITCH_PG_PORTS`, `WARP_TEST_SWITCH_MY_PORTS`), `ReplicaReadRoutingLiveTest`, `FailoverFollowLiveTest`, `FailoverPromoteLiveTest`,
   `MySqlReplicaFailoverLiveTest` (`WARP_TEST_*` variables are documented in each class's javadoc; they need
   local Postgres 17 and MySQL 9 binaries and a throwaway Postgres for `warp_config`).
 - **SQL Server Availability Group:** `Warp/tests/sqlserver-ag/ag.sh up` starts two SQL Server 2022 Developer

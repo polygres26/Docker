@@ -106,6 +106,24 @@ public final class FailoverMonitor {
         void repoint(BackendTarget replica, BackendTarget newPrimary) throws Exception;
     }
 
+    /** The engine steps of a planned switchover; defaults dispatch through {@link EngineHa}. */
+    public interface SwitchoverOps {
+        void freeze(BackendTarget primary) throws Exception;
+
+        void unfreeze(BackendTarget primary) throws Exception;
+
+        void awaitCaughtUp(BackendTarget primary, BackendTarget replica, long timeoutSeconds) throws Exception;
+
+        void promote(BackendTarget replica) throws Exception;
+
+        /** @return false when the engine cannot turn the old primary into a replica */
+        boolean demote(BackendTarget oldPrimary, BackendTarget newPrimary) throws Exception;
+    }
+
+    /** Outcome of {@link #switchover}: {@code ok} only when the new primary is serving writes. */
+    public record SwitchoverResult(boolean ok, String message) {
+    }
+
     /** Makes sure the failed primary can no longer take writes (STONITH, firewall, cloud API...).
      * Return false or throw to abort the promotion. */
     @FunctionalInterface
@@ -146,6 +164,40 @@ public final class FailoverMonitor {
     private final Deque<Event> events = new ArrayDeque<>();
     private volatile ScheduledExecutorService scheduler;
     private volatile PromoteHooks promoteHooks;
+    private volatile SwitchoverOps switchoverOps = new SwitchoverOps() {
+        private EngineHa ha(BackendTarget t) {
+            EngineHa h = EngineHa.forDialect(t.dialect());
+            if (h == null || !h.supportsSwitchover()) {
+                throw new IllegalStateException("planned switchover is not supported for " + t.dialect());
+            }
+            return h;
+        }
+
+        @Override
+        public void freeze(BackendTarget p) throws Exception {
+            ha(p).freezeWrites(p);
+        }
+
+        @Override
+        public void unfreeze(BackendTarget p) throws Exception {
+            ha(p).unfreezeWrites(p);
+        }
+
+        @Override
+        public void awaitCaughtUp(BackendTarget p, BackendTarget r, long t) throws Exception {
+            ha(p).awaitCaughtUp(p, r, t);
+        }
+
+        @Override
+        public void promote(BackendTarget r) throws Exception {
+            ha(r).promote(r);
+        }
+
+        @Override
+        public boolean demote(BackendTarget o, BackendTarget n) throws Exception {
+            return ha(o).demoteToReplica(o, n);
+        }
+    };
     // After Warp promotes a replica, the others still follow the dead primary; by default Warp repoints
     // them (WARP_FAILOVER_REPOINT=false turns that off). Null = do not repoint.
     private volatile Repointer repointer = !"false".equalsIgnoreCase(System.getenv("WARP_FAILOVER_REPOINT"))
@@ -160,6 +212,144 @@ public final class FailoverMonitor {
     public FailoverMonitor withPromoteHooks(PromoteHooks hooks) {
         this.promoteHooks = hooks;
         return this;
+    }
+
+    /** Fluent, for tests: replaces the engine steps of a planned switchover. */
+    FailoverMonitor withSwitchoverOps(SwitchoverOps ops) {
+        this.switchoverOps = ops;
+        return this;
+    }
+
+    /**
+     * Planned, operator-triggered primary swap with no data loss: freeze writes on the current primary,
+     * wait until {@code targetUrl} has everything it committed, promote the target, repoint the other
+     * replicas, and turn the old primary into a replica when the engine can (otherwise it is left
+     * read-only). Any failure before the promotion unfreezes the old primary and changes nothing.
+     * Writes fail for the duration of the swap (typically seconds); clients retry.
+     *
+     * <p>Holds the promotion lease while it runs, so no other instance's automatic promotion can start
+     * a second writer. Allowed in any failover mode except {@code off}.
+     */
+    public SwitchoverResult switchover(String backend, String targetUrl) {
+        if ("off".equals(registry.failoverModeOf(backend))) {
+            return new SwitchoverResult(false, "failover is off for '" + backend + "'");
+        }
+        BackendTarget primary = registry.get(backend);
+        if (primary == null) {
+            return new SwitchoverResult(false, "unknown backend '" + backend + "'");
+        }
+        EngineHa ha = EngineHa.forDialect(primary.dialect());
+        if (ha == null || !ha.supportsSwitchover()) {
+            return new SwitchoverResult(false, "planned switchover is not supported for " + primary.dialect()
+                    + " (Warp only follows a switchover done with the database's own tooling)");
+        }
+        List<ReplicaRouter.Replica> replicas = registry.replicaRouter().replicasOf(backend);
+        int idx = -1;
+        for (int i = 0; i < replicas.size(); i++) {
+            if (replicas.get(i).key().equals(targetUrl)) {
+                idx = i;
+            }
+        }
+        if (idx < 0) {
+            return new SwitchoverResult(false, "target is not one of this backend's configured replicas");
+        }
+        List<BackendTarget> nodes = new ArrayList<>();
+        nodes.add(primary);
+        replicas.forEach(r -> nodes.add(r.target()));
+        Map<String, NodeRole> roles = probeAll(nodes);
+        if (roles.get(primary.jdbcUrl()) != NodeRole.WRITABLE) {
+            return new SwitchoverResult(false, "the current primary is not writable; use failover, not a switchover");
+        }
+        if (roles.get(targetUrl) != NodeRole.READ_ONLY) {
+            return new SwitchoverResult(false, "the target replica is not reachable and read-only");
+        }
+        long term = -1;
+        PromoteHooks h = promoteHooks;
+        FailoverCoordination coord = h == null ? null : h.coordination();
+        if (coord != null) {
+            try {
+                var lease = coord.tryAcquireLease(backend, 300);
+                if (lease.isEmpty()) {
+                    return new SwitchoverResult(false, "another Warp instance holds the failover lease");
+                }
+                term = lease.get();
+            } catch (Exception e) {
+                return new SwitchoverResult(false, "cannot coordinate with the config database: " + e.getMessage());
+            }
+        }
+        try {
+            return doSwitchover(backend, primary, replicas, idx, roles);
+        } finally {
+            if (coord != null) {
+                try {
+                    coord.releaseLease(backend, term);
+                } catch (Exception e) {
+                    log.debug("switchover: releasing lease for '{}' failed (it will expire): {}", backend, e.toString());
+                }
+            }
+        }
+    }
+
+    private SwitchoverResult doSwitchover(String backend, BackendTarget primary, List<ReplicaRouter.Replica> replicas,
+            int idx, Map<String, NodeRole> roles) {
+        SwitchoverOps ops = switchoverOps;
+        BackendTarget target = replicas.get(idx).target();
+        String pm = BackendSetModel.maskUrl(primary.jdbcUrl());
+        String tm = BackendSetModel.maskUrl(target.jdbcUrl());
+        long timeout = longEnv("WARP_SWITCHOVER_CATCHUP_SECONDS", 30);
+        try {
+            ops.freeze(primary);
+        } catch (Exception e) {
+            // freezing may have half-applied: try to put it back
+            tryUnfreeze(ops, primary);
+            return aborted(backend, "could not freeze writes on " + pm + ": " + e.getMessage());
+        }
+        try {
+            ops.awaitCaughtUp(primary, target, timeout);
+        } catch (Exception e) {
+            tryUnfreeze(ops, primary);
+            return aborted(backend, tm + " did not catch up with " + pm + ": " + e.getMessage()
+                    + " -- writes re-enabled, nothing changed");
+        }
+        try {
+            ops.promote(target);
+        } catch (Exception e) {
+            tryUnfreeze(ops, primary);
+            return aborted(backend, "promoting " + tm + " failed: " + e.getMessage() + " -- writes re-enabled on " + pm);
+        }
+        if (probe.probe(target) != NodeRole.WRITABLE) {
+            // Both nodes may now be writable if the target did promote: do NOT unfreeze the old primary.
+            String m = "promoted " + tm + " but it does not report itself writable; " + pm + " was left read-only "
+                    + "-- investigate before re-enabling writes";
+            record(backend, "switchover-failed", m, AuditEvent.Type.BACKEND_FAILOVER);
+            return new SwitchoverResult(false, m);
+        }
+        applySwitch(backend, primary, replicas, idx, "planned switchover requested by an operator (replica had "
+                + "executed everything the old primary committed)", true);
+        repointSurvivors(backend, target, replicas, idx, roles);
+        String demoted;
+        try {
+            demoted = ops.demote(primary, target)
+                    ? "the old primary now replicates from the new one"
+                    : "the old primary was left read-only and is not replicating (rebuild it as a replica)";
+        } catch (Exception e) {
+            demoted = "the old primary was left read-only; making it a replica failed: " + e.getMessage();
+        }
+        record(backend, "switchover", pm + " -> " + tm + "; " + demoted, AuditEvent.Type.BACKEND_FAILOVER);
+        return new SwitchoverResult(true, "now writing to " + tm + "; " + demoted);
+    }
+
+    private void tryUnfreeze(SwitchoverOps ops, BackendTarget primary) {
+        try {
+            ops.unfreeze(primary);
+        } catch (Exception e) {
+            log.error("switchover: could NOT re-enable writes on {}: {}", BackendSetModel.maskUrl(primary.jdbcUrl()), e.toString());
+        }
+    }
+
+    private SwitchoverResult aborted(String backend, String reason) {
+        record(backend, "switchover-aborted", reason, AuditEvent.Type.BACKEND_FAILOVER);
+        return new SwitchoverResult(false, reason);
     }
 
     /** Fluent: replaces (or with null, disables) repointing of surviving replicas after a promotion. */

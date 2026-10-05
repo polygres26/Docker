@@ -174,4 +174,71 @@ final class PostgresHa implements EngineHa {
         }
         return false;
     }
+
+    @Override
+    public boolean supportsSwitchover() {
+        return true;
+    }
+
+    /**
+     * Sets {@code default_transaction_read_only = on} cluster-wide (ALTER SYSTEM + reload) and terminates
+     * every other client session so nothing keeps a pre-freeze read-write transaction open. A client that
+     * explicitly runs {@code SET transaction_read_only = off} after reconnecting could still write; that is
+     * why the switchover then verifies the replica caught up to the primary's final WAL position.
+     * Needs a superuser.
+     */
+    @Override
+    public void freezeWrites(BackendTarget primary) throws SQLException {
+        try (Connection c = connect(primary); Statement st = c.createStatement()) {
+            c.setAutoCommit(true);
+            st.execute("alter system set default_transaction_read_only = on");
+            st.execute("select pg_reload_conf()");
+            st.execute("select pg_terminate_backend(pid) from pg_stat_activity where pid <> pg_backend_pid() "
+                    + "and backend_type = 'client backend'");
+        }
+    }
+
+    @Override
+    public void unfreezeWrites(BackendTarget primary) throws SQLException {
+        try (Connection c = connect(primary); Statement st = c.createStatement()) {
+            c.setAutoCommit(true);
+            st.execute("alter system reset default_transaction_read_only");
+            st.execute("select pg_reload_conf()");
+        }
+    }
+
+    @Override
+    public void awaitCaughtUp(BackendTarget primary, BackendTarget replica, long timeoutSeconds) throws SQLException {
+        String target;
+        try (Connection c = connect(primary); Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery("select pg_current_wal_lsn()::text")) {
+            rs.next();
+            target = rs.getString(1);
+        }
+        long deadline = System.currentTimeMillis() + timeoutSeconds * 1000;
+        try (Connection c = connect(replica)) {
+            while (true) {
+                try (java.sql.PreparedStatement ps = c.prepareStatement(
+                        "select pg_last_wal_replay_lsn() >= ?::pg_lsn")) {
+                    ps.setString(1, target);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next() && rs.getBoolean(1)) {
+                            return;
+                        }
+                    }
+                }
+                if (System.currentTimeMillis() > deadline) {
+                    throw new SQLException("replica did not replay up to " + target + " within " + timeoutSeconds + "s");
+                }
+                try {
+                    Thread.sleep(200);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new SQLException("interrupted", e);
+                }
+            }
+        }
+    }
+    // demoteToReplica stays false: turning a running primary into a standby needs a restart with
+    // standby.signal (and usually pg_rewind) on the host, which Warp cannot do over SQL.
 }
