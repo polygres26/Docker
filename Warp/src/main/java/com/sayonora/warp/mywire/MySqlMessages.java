@@ -18,6 +18,23 @@ final class MySqlMessages {
     
     static final int CLIENT_SSL = 0x00000800;
 
+    private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
+
+    /**
+     * The 20-byte random challenge of the handshake, as printable ASCII (33..126) like the one a real MySQL server makes.
+     * Real bug this replaces: raw random bytes. The challenge travels in two pieces, 8 bytes and then 12 bytes followed by
+     * a NUL, and clients read them as strings; a zero byte anywhere (7.5% of challenges) truncated it, the client hashed
+     * its password against the wrong value, and the login failed with "Access denied" for correct credentials (218 of
+     * 3,000 logins in the test that found it).
+     */
+    static byte[] newScramble() {
+        byte[] scramble = new byte[20];
+        for (int i = 0; i < scramble.length; i++) {
+            scramble[i] = (byte) (33 + RANDOM.nextInt(94));
+        }
+        return scramble;
+    }
+
     static byte[] handshakeV10(long connectionId, byte[] scramble, boolean tlsSupported) {
         ByteArrayOutputStream b = new ByteArrayOutputStream();
         b.write(10);

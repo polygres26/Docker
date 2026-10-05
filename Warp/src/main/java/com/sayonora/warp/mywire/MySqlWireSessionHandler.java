@@ -20,7 +20,6 @@ import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
-import java.security.SecureRandom;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSetMetaData;
@@ -303,8 +302,7 @@ public final class MySqlWireSessionHandler implements Runnable {
     }
 
     private HandshakeStreams performHandshake(DataInputStream in, OutputStream out, MySqlPacket packets) throws IOException {
-        byte[] scramble = new byte[20];
-        new SecureRandom().nextBytes(scramble);
+        byte[] scramble = MySqlMessages.newScramble();
         long connectionId = NEXT_CONNECTION_ID.getAndIncrement();
         packets.writePayload(out, MySqlMessages.handshakeV10(connectionId, scramble, TlsSupport.enabled(options, "MYWIRE")));
 
