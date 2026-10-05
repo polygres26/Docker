@@ -197,6 +197,16 @@ final class PostgresHa implements EngineHa {
         }
     }
 
+    /** A fresh session on a node that is not in recovery reports {@code transaction_read_only = on} when {@code default_transaction_read_only}
+     * is set cluster-wide, which is how both a switchover and the stale-writer guard freeze a node. */
+    @Override
+    public boolean writesFrozen(BackendTarget node) throws SQLException {
+        try (Connection c = connect(node); Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery("select current_setting('transaction_read_only'), pg_is_in_recovery()")) {
+            return rs.next() && "on".equalsIgnoreCase(rs.getString(1)) && !rs.getBoolean(2);
+        }
+    }
+
     @Override
     public boolean supportsSwitchover() {
         return true;

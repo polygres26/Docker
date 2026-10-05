@@ -36,6 +36,7 @@ class FailoverRejoinTest {
                 (b, o, n, r) -> reg.applyFailoverLocally(b, o, n, r), null, clock::get, 3, 60, 5)
                 .withRejoinExecutor(Runnable::run)
                 .withStaleWriterFence(node -> fenced.add(node.jdbcUrl()))
+                .withFrozenCheck(node -> false)
                 .withRejoiner((node, primary) -> {
                     attempts.add(node.jdbcUrl() + "->" + primary.jdbcUrl());
                     if (result.outcome() == RejoinOutcome.REJOINED) {
@@ -217,5 +218,39 @@ class FailoverRejoinTest {
         monitor.withPrimaryView(backend -> P);
         passes3();
         assertEquals(List.of(OLD), fenced);
+    }
+
+    @Test
+    void aFrozenNodeIsReadOnlyNotASecondWriter() {
+        setUp();
+        monitor.withRejoiner(null);
+        monitor.withFrozenCheck(node -> node.jdbcUrl().equals(OLD)); // e.g. the primary a planned switchover left read-only
+        passes3();
+        assertFalse(has("split-brain-suspected"), "a node that refuses writes is not a second writer");
+        assertTrue(fenced.isEmpty(), "nothing to freeze: it already is");
+        assertTrue(has("frozen-node"));
+    }
+
+    @Test
+    void aFrozenCheckThatFailsLeavesTheNodeWritable() {
+        setUp();
+        monitor.withRejoiner(null);
+        monitor.withFrozenCheck(node -> {
+            throw new java.sql.SQLException("cannot query it");
+        });
+        passes3();
+        assertTrue(has("split-brain-suspected"), "no evidence it is frozen: the alarm stays");
+        assertFalse(has("frozen-node"));
+    }
+
+    @Test
+    void theConfiguredPrimaryIsNeverTreatedAsFrozen() {
+        setUp();
+        cluster.put(OLD, NodeRole.READ_ONLY); // an ordinary replica
+        monitor.withRejoiner(null);
+        monitor.withFrozenCheck(node -> true); // would say frozen for everything, including the primary
+        passes3();
+        assertFalse(has("frozen-node"), "only a replica entry that probes as writable is checked");
+        assertFalse(has("split-brain-suspected"));
     }
 }

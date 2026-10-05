@@ -144,6 +144,12 @@ public final class FailoverMonitor {
         String currentPrimaryUrl(String backend) throws Exception;
     }
 
+    /** Whether a node that reports itself writable actually refuses writes (see {@link EngineHa#writesFrozen}). */
+    @FunctionalInterface
+    public interface FrozenCheck {
+        boolean writesFrozen(BackendTarget node) throws Exception;
+    }
+
     /** Stops a stale writable node taking writes (see {@link EngineHa#fenceStaleWriter}). */
     @FunctionalInterface
     public interface StaleWriterFence {
@@ -208,6 +214,10 @@ public final class FailoverMonitor {
     private volatile StaleWriterFence staleFence = !"false".equalsIgnoreCase(System.getenv("WARP_FAILOVER_FREEZE_STALE_WRITER"))
             ? FailoverMonitor::fenceNode : null;
     private volatile PrimaryView primaryView;
+    /** A replica entry that is not in recovery but refuses writes (frozen by a switchover or by the stale-writer guard) is read-only, not a
+     * second writer. WARP_FAILOVER_FROZEN_AWARE=false disables. */
+    private volatile FrozenCheck frozenCheck = !"false".equalsIgnoreCase(System.getenv("WARP_FAILOVER_FROZEN_AWARE"))
+            ? FailoverMonitor::nodeFrozen : null;
     private final Map<String, Long> lastStaleFence = new ConcurrentHashMap<>();
     private final java.util.Set<String> staleFenceAnnounced = ConcurrentHashMap.newKeySet();
     private final java.util.Set<String> switchoversInProgress = ConcurrentHashMap.newKeySet();
@@ -270,6 +280,42 @@ public final class FailoverMonitor {
     public FailoverMonitor withStandbyCheck(StandbyCheck c) {
         this.standbyCheck = c;
         return this;
+    }
+
+    /** Fluent: replaces (or with null, disables) the check that tells a frozen node from a writable one. */
+    public FailoverMonitor withFrozenCheck(FrozenCheck c) {
+        this.frozenCheck = c;
+        return this;
+    }
+
+    static boolean nodeFrozen(BackendTarget node) throws Exception {
+        EngineHa ha = EngineHa.forDialect(node.dialect());
+        return ha != null && ha.writesFrozen(node);
+    }
+
+    /** Reports each replica entry that probes as writable but is frozen as read-only. {@code nodes.get(0)} is the primary and is left alone. */
+    private Map<String, NodeRole> probeAllFrozenAware(String backend, List<BackendTarget> nodes) {
+        Map<String, NodeRole> roles = probeAll(nodes);
+        FrozenCheck f = frozenCheck;
+        if (f == null) {
+            return roles;
+        }
+        for (int i = 1; i < nodes.size(); i++) {
+            BackendTarget n = nodes.get(i);
+            if (roles.get(n.jdbcUrl()) != NodeRole.WRITABLE) {
+                continue;
+            }
+            try {
+                if (f.writesFrozen(n)) {
+                    roles.put(n.jdbcUrl(), NodeRole.READ_ONLY);
+                    note(backend, "frozen-node", BackendSetModel.maskUrl(n.jdbcUrl()) + " is not in recovery but refuses writes (it was "
+                            + "frozen), so it is treated as read-only, not as a second writer; it still has to be rebuilt as a replica");
+                }
+            } catch (Exception e) {
+                log.debug("failover: frozen check of {} failed: {}", n.jdbcUrl(), e.toString());
+            }
+        }
+        return roles;
     }
 
     /** Fluent: lets the monitor confirm against the shared configuration before freezing anything (see {@link PrimaryView}). */
@@ -746,7 +792,7 @@ public final class FailoverMonitor {
         List<BackendTarget> nodes = new ArrayList<>();
         nodes.add(primary);
         replicas.forEach(r -> nodes.add(r.target()));
-        Map<String, NodeRole> roles = probeAll(nodes);
+        Map<String, NodeRole> roles = probeAllFrozenAware(backend, nodes);
 
         List<NodeState> states = new ArrayList<>();
         for (BackendTarget n : nodes) {
@@ -960,7 +1006,7 @@ public final class FailoverMonitor {
         List<BackendTarget> nodes = new ArrayList<>();
         nodes.add(oldPrimary);
         replicas.forEach(r -> nodes.add(r.target()));
-        Map<String, NodeRole> fresh = probeAll(nodes);
+        Map<String, NodeRole> fresh = probeAllFrozenAware(backend, nodes);
         for (BackendTarget n : nodes) {
             if (fresh.getOrDefault(n.jdbcUrl(), NodeRole.UNREACHABLE) == NodeRole.WRITABLE) {
                 blocked(backend, "re-check before promoting found " + BackendSetModel.maskUrl(n.jdbcUrl())

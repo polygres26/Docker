@@ -331,6 +331,14 @@ accepting writes until someone notices.
 | SQL Server | the secondary's own row in `dm_hadr_availability_replica_states` reads `CONNECTED` (an idle primary does not advance `last_received_time`, so there is no age: connected counts as 0). Stays `CONNECTED` while an idle primary is alive, flips to `DISCONNECTED` about 13 s after it is killed | `ALTER AVAILABILITY GROUP ... OFFLINE` on a read-scale (`CLUSTER_TYPE = NONE`) AG: role `RESOLVING`, every access fails with error 983 until the instance restarts (it then rejoins as a secondary). `ALTER DATABASE ... SET READ_ONLY / SINGLE_USER` is refused on an availability database (error 1468). A clustered AG is refused: the cluster manager owns it | yes, against a real two-node AG (engine level) |
 | Oracle | none: Warp never promotes Oracle, so there is no promotion to veto | none: unsupported with a clear event (`stale-writer-unfenced`); a Data Guard primary cannot be demoted over SQL and there was no Oracle to verify a restricted-session approach on | n/a |
 
+**Frozen nodes are not second writers.** A node listed as a replica that is not in recovery but refuses writes (the primary a planned
+switchover left read-only, or a stale writer the guard above froze) is treated as read-only, not as a writable second node
+(`WARP_FAILOVER_FROZEN_AWARE`, default `true`; event `frozen-node`). No split-brain alarm is raised for it and nothing re-freezes it every
+cooldown, but it is still reported as `rejoin-needed` (or rebuilt by `WARP_FAILOVER_REJOIN_COMMAND`) because it has to be rebuilt as a replica.
+Postgres checks `transaction_read_only` on a fresh session (set cluster-wide by `default_transaction_read_only`); MySQL already reports a
+`read_only` server as read-only; SQL Server's `OFFLINE` node is unreachable. The check is never applied to the configured primary: a primary
+that is read-only for another reason must not look like a failure and start a promotion.
+
 What the guards do **not** cover: a partition that also cuts the replica off from the primary while clients can still reach the primary (the
 replica then hears nothing, so only the fence command helps, or the majority of Warp instances); two Warp instances with stale
 configuration writing to different nodes (the lease controls who decides, not who writes); and the config database being a single point (Warp
