@@ -243,6 +243,22 @@ replicating**: making a running primary a standby needs a restart with `standby.
 using the backend's own user/password as the replication account** (so that user needs REPLICATION SLAVE;
 `GET_SOURCE_PUBLIC_KEY=1` is used so caching_sha2 works without TLS). Oracle and SQL Server are not supported.
 
+### Rejoining a returned old primary
+
+While the primary is writable, Warp watches for a configured replica that is writable or reachable but not
+replicating (typically the old primary coming back after a failover) and tries to rejoin it, at most once per
+`WARP_FAILOVER_COOLDOWN_SECONDS` per node. `WARP_FAILOVER_AUTO_REJOIN=false` turns it off.
+
+- **MySQL:** rejoined as a GTID replica of the current primary only if it holds **no transaction the
+  current primary lacks** (`GTID_SUBTRACT`), checked before and again after making it read-only. A node
+  with errant transactions, or without `gtid_mode=ON`, is left exactly as found and reported
+  `rejoin-needed`; it must be rebuilt. The replication account is the backend's own user and password
+  (as for a planned switchover).
+- **Postgres:** Warp cannot demote a running primary over SQL, so it only reports `rejoin-needed` (stop the
+  node and rebuild it with `pg_rewind` or `pg_basebackup`).
+- A node that needs a rebuild but is still writable keeps raising the split-brain alarm, deliberately.
+- Events: `rejoined` (audited), `rejoin-needed`, `rejoin-failed`.
+
 Without external fencing the majority rule is the only protection against promoting while the old
 primary is merely partitioned away from Warp but still serving others. Configure
 `WARP_FAILOVER_FENCE_COMMAND` if that can happen in your network.
@@ -263,7 +279,7 @@ primary is merely partitioned away from Warp but still serving others. Configure
 
 All live tests are opt-in and skipped unless their environment is set; they run real servers, not mocks.
 
-- **Postgres / MySQL:** `SwitchoverLiveTest` (`WARP_TEST_SWITCH_PG_PORTS`, `WARP_TEST_SWITCH_MY_PORTS`), `ReplicaReadRoutingLiveTest`, `FailoverFollowLiveTest`, `FailoverPromoteLiveTest`,
+- **Postgres / MySQL:** `MySqlRejoinLiveTest` (`WARP_TEST_REJOIN_MY_PORTS`), `SwitchoverLiveTest` (`WARP_TEST_SWITCH_PG_PORTS`, `WARP_TEST_SWITCH_MY_PORTS`), `ReplicaReadRoutingLiveTest`, `FailoverFollowLiveTest`, `FailoverPromoteLiveTest`,
   `MySqlReplicaFailoverLiveTest` (`WARP_TEST_*` variables are documented in each class's javadoc; they need
   local Postgres 17 and MySQL 9 binaries and a throwaway Postgres for `warp_config`).
 - **SQL Server Availability Group:** `Warp/tests/sqlserver-ag/ag.sh up` starts two SQL Server 2022 Developer

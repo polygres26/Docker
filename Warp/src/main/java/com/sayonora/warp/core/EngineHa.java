@@ -43,6 +43,25 @@ public interface EngineHa {
         throw new UnsupportedOperationException("repointing replicas is not supported for " + replica.dialect());
     }
 
+    enum RejoinOutcome { NOT_NEEDED, REJOINED, NEEDS_REBUILD, UNSUPPORTED }
+
+    /** What {@link #rejoin} did, with a human-readable detail for events. */
+    record RejoinResult(RejoinOutcome outcome, String detail) {
+        static RejoinResult of(RejoinOutcome o, String detail) {
+            return new RejoinResult(o, detail);
+        }
+    }
+
+    /**
+     * A node that used to be the primary (or otherwise is not replicating) is reachable again while
+     * {@code currentPrimary} is writable: make it a replica of the current primary if that is provably
+     * safe -- it must hold no transactions the current primary lacks -- else say it needs a rebuild.
+     * Must never lose data and must leave the node as it found it when it refuses.
+     */
+    default RejoinResult rejoin(BackendTarget node, BackendTarget currentPrimary) throws Exception {
+        return RejoinResult.of(RejoinOutcome.UNSUPPORTED, "automatic rejoin is not supported for " + node.dialect());
+    }
+
     /** True when the planned-switchover operations below are implemented (and promote/repoint work). */
     default boolean supportsSwitchover() {
         return false;

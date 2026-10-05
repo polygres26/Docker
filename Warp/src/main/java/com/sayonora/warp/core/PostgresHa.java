@@ -241,4 +241,21 @@ final class PostgresHa implements EngineHa {
     }
     // demoteToReplica stays false: turning a running primary into a standby needs a restart with
     // standby.signal (and usually pg_rewind) on the host, which Warp cannot do over SQL.
+
+    /** Postgres cannot demote a running primary over SQL, so this only classifies the node: still in
+     * recovery means nothing to do; a standalone primary needs an operator to stop it and rebuild it
+     * (pg_rewind or a fresh pg_basebackup) as a standby of the current primary. */
+    @Override
+    public RejoinResult rejoin(BackendTarget node, BackendTarget currentPrimary) throws SQLException {
+        try (Connection c = connect(node); Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery("select pg_is_in_recovery()")) {
+            rs.next();
+            if (rs.getBoolean(1)) {
+                return RejoinResult.of(RejoinOutcome.NOT_NEEDED, "already a standby");
+            }
+            return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "it is running as a standalone primary; Warp cannot "
+                    + "turn a running Postgres primary into a standby -- stop it and rebuild it from the current "
+                    + "primary with pg_rewind or pg_basebackup");
+        }
+    }
 }
