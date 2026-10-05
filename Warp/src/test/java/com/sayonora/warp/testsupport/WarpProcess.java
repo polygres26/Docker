@@ -134,14 +134,18 @@ public final class WarpProcess implements AutoCloseable {
             drain.setDaemon(true);
             drain.start();
 
-            waitForHttpReady(metricsPort, Duration.ofSeconds(30), env.get("WARP_ADMIN_TOKEN"));
+            // WARP_TEST_STARTUP_SECONDS lets a slow or heavily loaded machine (embedded Ignite start-up can take a
+            // minute) wait longer than the 30s default without editing tests.
+            Duration startup = Duration.ofSeconds(Long.parseLong(
+                    System.getenv().getOrDefault("WARP_TEST_STARTUP_SECONDS", "30")));
+            waitForHttpReady(metricsPort, startup, env.get("WARP_ADMIN_TOKEN"));
             // /metrics starts early in Main's setup, before every protocol listener thread has
             // necessarily started (each frontend binds on its own thread, in sequence) -- so it
             // alone isn't proof the frontend under test is actually accepting connections yet.
             // Found live: a real ojdbc11 client connecting to orawire (one of the later listeners
             // to start) got ORA-12541/connection-refused even though /metrics was already up.
             for (int port : ports.values()) {
-                waitForTcpReady(port, Duration.ofSeconds(30));
+                waitForTcpReady(port, startup);
             }
             return new WarpProcess(process, metricsPort, Map.copyOf(ports));
         }

@@ -43,6 +43,13 @@ inside a transaction; the session holds no connection-bound state (SET values, p
 the session has not written in the last `WARP_READ_AFTER_WRITE_WINDOW_MS` (default 2000); and a replica
 is eligible. Otherwise it runs on the primary. If a replica errors, the read is retried on the primary.
 
+**Which sessions get replica reads:** a client that selects a backend by database name (connect to database
+`pg` to use backend `pg`) or is routed to it by a router rule. Each such read runs on a fresh connection, on
+a replica when eligible. A session on the implicit `WARP_*` default connection, which is not a
+`WARP_BACKENDS` entry, has no replicas configured and always reads from the primary. Relay mode never routes
+(it is a raw-byte proxy); Oracle Bridge's server is not a registered backend.
+This was verified end to end with a pgwire client (`ReplicaWireRoutingLiveTest`).
+
 A replica is eligible when its lag was sampled within ~3 sampling intervals, the probe confirmed it
 is a replica, lag ≤ its `maxLagSeconds`, and it is not quarantined.
 
@@ -294,7 +301,7 @@ as YAML but not run through `promtool` or a live Prometheus.
 
 All live tests are opt-in and skipped unless their environment is set; they run real servers, not mocks.
 
-- **Postgres / MySQL:** `MySqlRejoinLiveTest` (`WARP_TEST_REJOIN_MY_PORTS`), `SwitchoverLiveTest` (`WARP_TEST_SWITCH_PG_PORTS`, `WARP_TEST_SWITCH_MY_PORTS`), `ReplicaReadRoutingLiveTest`, `FailoverFollowLiveTest`, `FailoverPromoteLiveTest`,
+- **Postgres / MySQL:** `ReplicaWireRoutingLiveTest` (`WARP_TEST_WIRE_PG_PORTS=primary,replica`; a real pgwire client against a real Warp process), `MySqlRejoinLiveTest` (`WARP_TEST_REJOIN_MY_PORTS`), `SwitchoverLiveTest` (`WARP_TEST_SWITCH_PG_PORTS`, `WARP_TEST_SWITCH_MY_PORTS`), `ReplicaReadRoutingLiveTest`, `FailoverFollowLiveTest`, `FailoverPromoteLiveTest`,
   `MySqlReplicaFailoverLiveTest` (`WARP_TEST_*` variables are documented in each class's javadoc; they need
   local Postgres 17 and MySQL 9 binaries and a throwaway Postgres for `warp_config`).
 - **SQL Server Availability Group:** `Warp/tests/sqlserver-ag/ag.sh up` starts two SQL Server 2022 Developer
