@@ -596,8 +596,7 @@ export async function testSetBackend(set: string, name: string): Promise<Backend
 // --- Federation plan history: /api/federation/plans (ShardJoinExecutor/SchemaFederationStage's
 // own real, captured Calcite EXPLAIN PLAN FOR history -- see MetricsServer's own javadoc on the
 // route). 404s (not an error to surface as one) when WARP_FEDERATION_PLAN_HISTORY isn't set --
-// the page itself renders the "not enabled" explanation for that case, same as Queues does for
-// sqswire not being configured. ---
+// the page itself renders the "not enabled" explanation for that case. ---
 
 // A real, MEASURED (not estimated) leaf table scan -- see LeafScanProfiler's own javadoc.
 // Calcite's own EXPLAIN PLAN FOR only ever reports the planner's pre-execution row-count
@@ -642,27 +641,6 @@ export async function listFederationPlans(): Promise<FederationPlanEntry[]> {
     }
     throw e
   }
-}
-
-// --- sqswire queues: /api/queues ---
-
-export interface QueueInfo {
-  name: string
-  visible: number
-  inFlight: number
-  fifo: boolean
-  visibilityTimeout: number
-  dlqQueueName: string | null
-  maxReceiveCount: number | null
-  backend: string
-}
-
-export async function listQueues(): Promise<QueueInfo[]> {
-  return api('/api/queues')
-}
-
-export async function deleteQueue(name: string): Promise<void> {
-  await api(`/api/queues/${encodeURIComponent(name)}`, { method: 'DELETE' })
 }
 
 // --- Read replicas and failover: /api/replicas, /api/failover ---
