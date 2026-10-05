@@ -297,7 +297,8 @@ replicating (typically the old primary coming back after a failover) and tries t
   and a crash failover (the old primary came back streaming and eligible for read routing). Caveats: anything the old
   primary wrote that never reached the new primary is **discarded**; `pg_rewind` needs `wal_log_hints=on` or data
   checksums on the old primary and the WAL back to the divergence point (`wal_keep_size` or an archive; otherwise use
-  `--basebackup-fallback`); the command runs on the monitor's thread, so failover decisions wait while it runs; the
+  `--basebackup-fallback`); the command runs on its own thread (a rejoin never blocks probing or failover, and at most one runs per node), but
+  Warp's view of that node stays unchanged until it finishes; the
   command must be able to stop and start the old primary, so it has to run where that Postgres runs; one command
   serves every node, so it must pick the data directory from `WARP_REJOIN_NODE_URL` if there is more than one.
 - A node that needs a rebuild but is still writable keeps raising the split-brain alarm, deliberately.

@@ -33,6 +33,7 @@ class FailoverRejoinTest {
         cluster.put(OLD, NodeRole.WRITABLE); // came back still writable
         monitor = new FailoverMonitor(reg, node -> cluster.getOrDefault(node.jdbcUrl(), NodeRole.UNREACHABLE),
                 (b, o, n, r) -> reg.applyFailoverLocally(b, o, n, r), null, clock::get, 3, 60, 5)
+                .withRejoinExecutor(Runnable::run)
                 .withRejoiner((node, primary) -> {
                     attempts.add(node.jdbcUrl() + "->" + primary.jdbcUrl());
                     if (result.outcome() == RejoinOutcome.REJOINED) {
@@ -96,5 +97,33 @@ class FailoverRejoinTest {
         cluster.put(OLD, NodeRole.READ_ONLY);
         monitor.evaluateOnce(false);
         assertTrue(attempts.isEmpty());
+    }
+
+    @Test
+    void aSlowRejoinRunsOffTheMonitorThreadAndIsNotStartedTwice() throws Exception {
+        setUp();
+        monitor.withRejoinExecutor(java.util.concurrent.Executors.newSingleThreadExecutor());
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+        monitor.withRejoiner((node, primary) -> {
+            attempts.add(node.jdbcUrl());
+            started.countDown();
+            release.await();
+            cluster.put(node.jdbcUrl(), NodeRole.READ_ONLY);
+            return RejoinResult.of(RejoinOutcome.REJOINED, "slow rebuild done");
+        });
+        long t0 = System.nanoTime();
+        monitor.evaluateOnce(false);
+        assertTrue((System.nanoTime() - t0) / 1_000_000 < 2000, "evaluation does not wait for the rejoin");
+        assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS));
+        clock.addAndGet(61_000); // past the cooldown, but the first attempt is still running
+        monitor.evaluateOnce(false);
+        assertEquals(1, attempts.size(), "no second attempt while one is in flight");
+        release.countDown();
+        long deadline = System.currentTimeMillis() + 5000;
+        while (!has("rejoined") && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        assertTrue(has("rejoined"));
     }
 }

@@ -174,6 +174,14 @@ public final class FailoverMonitor {
     private volatile Rejoiner rejoiner = !"false".equalsIgnoreCase(System.getenv("WARP_FAILOVER_AUTO_REJOIN"))
             ? FailoverMonitor::rejoinNode : null;
     private final Map<String, Long> lastRejoinAttempt = new ConcurrentHashMap<>();
+    /** Nodes with a rejoin running right now. A rejoin can take minutes (a host-side rebuild), so it runs on its own
+     * thread instead of the monitor's: probing and failover decisions keep going while it works. */
+    private final java.util.Set<String> rejoinsInFlight = ConcurrentHashMap.newKeySet();
+    private volatile java.util.concurrent.Executor rejoinExecutor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "warp-failover-rejoin");
+        t.setDaemon(true);
+        return t;
+    });
     private volatile SwitchoverOps switchoverOps = new SwitchoverOps() {
         private EngineHa ha(BackendTarget t) {
             EngineHa h = EngineHa.forDialect(t.dialect());
@@ -224,6 +232,12 @@ public final class FailoverMonitor {
         return this;
     }
 
+    /** Fluent, for tests: where rejoin attempts run ({@code Runnable::run} makes them synchronous). */
+    public FailoverMonitor withRejoinExecutor(java.util.concurrent.Executor e) {
+        this.rejoinExecutor = e;
+        return this;
+    }
+
     /** Fluent: replaces (or with null, disables) automatic rejoin of returned old primaries. */
     public FailoverMonitor withRejoiner(Rejoiner r) {
         this.rejoiner = r;
@@ -256,27 +270,45 @@ public final class FailoverMonitor {
             if (last != null && now - last < cooldownMillis) {
                 continue;
             }
+            if (!rejoinsInFlight.add(rep.key())) {
+                continue; // a previous attempt (e.g. a slow host-side rebuild) is still running
+            }
             lastRejoinAttempt.put(rep.key(), now);
             String masked = BackendSetModel.maskUrl(rep.key());
-            try {
-                EngineHa.RejoinResult res = r.rejoin(rep.target(), primary);
-                switch (res.outcome()) {
-                    case REJOINED -> {
-                        record(backend, "rejoined", masked + ": " + res.detail(), AuditEvent.Type.BACKEND_FAILOVER);
-                        Streak s = streaks.get(backend + "|" + rep.key());
-                        if (s != null) {
-                            s.writable = 0;
-                            s.last = NodeRole.READ_ONLY;
+            Thread evaluating = Thread.currentThread();
+            int index = i;
+            Runnable job = () -> {
+                try {
+                    EngineHa.RejoinResult res = r.rejoin(rep.target(), primary);
+                    switch (res.outcome()) {
+                        case REJOINED -> {
+                            record(backend, "rejoined", masked + ": " + res.detail(), AuditEvent.Type.BACKEND_FAILOVER);
+                            Streak s = streaks.get(backend + "|" + rep.key());
+                            if (s != null) {
+                                s.writable = 0;
+                                s.last = NodeRole.READ_ONLY;
+                            }
+                            if (Thread.currentThread() == evaluating) {
+                                states.set(index + 1, new NodeState(rep.key(), NodeRole.READ_ONLY, 0, 0));
+                            }
                         }
-                        states.set(i + 1, new NodeState(rep.key(), NodeRole.READ_ONLY, 0, 0));
+                        case NEEDS_REBUILD -> note(backend, "rejoin-needed", masked + ": " + res.detail());
+                        default -> {
+                        }
                     }
-                    case NEEDS_REBUILD -> note(backend, "rejoin-needed", masked + ": " + res.detail());
-                    default -> {
-                    }
+                } catch (Exception e) {
+                    note(backend, "rejoin-failed", masked + ": " + e.getMessage());
+                    log.error("failover: rejoining {} failed: {}", masked, e.toString());
+                } finally {
+                    lastRejoinAttempt.put(rep.key(), clock.getAsLong());
+                    rejoinsInFlight.remove(rep.key());
                 }
-            } catch (Exception e) {
+            };
+            try {
+                rejoinExecutor.execute(job);
+            } catch (RuntimeException e) {
+                rejoinsInFlight.remove(rep.key());
                 note(backend, "rejoin-failed", masked + ": " + e.getMessage());
-                log.error("failover: rejoining {} failed: {}", masked, e.toString());
             }
         }
     }
