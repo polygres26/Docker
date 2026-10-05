@@ -28,7 +28,9 @@ class StoreFailoverBrownoutLiveTest {
         List<BrownoutHarness.Result> results = new ArrayList<>();
         StringBuilder md = new StringBuilder("# Store-backed protocols under switchover and failover\n\n" + BrownoutHarness.REPORT_HEADER);
         try {
-            for (var w : StoreWorkloads.all()) {
+            List<com.sayonora.warp.testsupport.BrownoutHarness.Workload> workloads = new ArrayList<>(StoreWorkloads.all());
+            workloads.addAll(RestWorkloads.all());
+            for (var w : workloads) {
                 if (only != null && !List.of(only.split(",")).contains(w.name())) {
                     continue;
                 }

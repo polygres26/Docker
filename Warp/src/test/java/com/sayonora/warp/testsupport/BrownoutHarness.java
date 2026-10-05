@@ -81,6 +81,8 @@ public final class BrownoutHarness {
     private static final int WRITERS = 3;
     private static final int READERS = 2;
     private static final long PACE_MS = 20;
+    /** WARP_TEST_BROWNOUT_QUICK=true shortens the phases to find setup mistakes fast; the numbers are then not comparable. */
+    private static final boolean QUICK = "true".equalsIgnoreCase(System.getenv("WARP_TEST_BROWNOUT_QUICK"));
 
     private BrownoutHarness() {
     }
@@ -143,7 +145,7 @@ public final class BrownoutHarness {
             threads.add(worker("r" + r, stop, workload, warp, false, 100 + r, startNanos, reads, acked, errors));
         }
         threads.forEach(Thread::start);
-        Thread.sleep(12_000);
+        Thread.sleep(QUICK ? 3_000 : 12_000);
 
         long eventMs = (System.nanoTime() - startNanos) / 1_000_000;
         String eventNote;
@@ -153,11 +155,11 @@ public final class BrownoutHarness {
             String res = http("POST", "http://localhost:" + warp.metricsPort() + "/api/failover/pg/switchover",
                     "{\"target\":\"" + replica.url() + "\"}");
             eventNote = "switchover API took " + (System.nanoTime() - t0) / 1_000_000 + " ms: " + res;
-            postEvent = 25_000;
+            postEvent = QUICK ? 6_000 : 25_000;
         } else {
             primary.stop("immediate");
             eventNote = "primary crashed (pg_ctl -m immediate)";
-            postEvent = 45_000;
+            postEvent = QUICK ? 15_000 : 45_000;
         }
         Thread.sleep(postEvent);
         stop.set(true);

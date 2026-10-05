@@ -141,7 +141,8 @@ public final class WarpProcess implements AutoCloseable {
                         }
                         // a listener this test asked for refused to start (Warp keeps running without it): no point waiting
                         for (String protocol : ports.keySet()) {
-                            if (line.contains("ERROR") && line.contains(" " + protocol + " failed to start")) {
+                            if (line.contains("ERROR") && line.contains("failed to start")
+                                    && line.toLowerCase(java.util.Locale.ROOT).contains(protocol.toLowerCase(java.util.Locale.ROOT))) {
                                 fatal.compareAndSet(null, line);
                             }
                         }
