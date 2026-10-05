@@ -19,7 +19,6 @@ import Topology from './pages/Topology'
 import FirewallRules from './pages/FirewallRules'
 import AclRules from './pages/AclRules'
 import OAuth from './pages/OAuth'
-import Queues from './pages/Queues'
 import DataExplorer from './pages/DataExplorer'
 import RouterRules from './pages/RouterRules'
 import Qos from './pages/Qos'
@@ -69,7 +68,6 @@ export default function App() {
       <Route path="/backends" element={<Navigate to="/infrastructure" replace />} />
       <Route path="/backend-sets" element={<Navigate to="/infrastructure" replace />} />
       <Route path="/ab-routing" element={<RequireAuth><AbRouting /></RequireAuth>} />
-      <Route path="/queues" element={<RequireAuth><Queues /></RequireAuth>} />
       <Route path="/data" element={<RequireAuth><DataExplorer /></RequireAuth>} />
       <Route path="/router" element={<RequireAuth><RouterRules /></RequireAuth>} />
       <Route path="/qos" element={<RequireAuth><Qos /></RequireAuth>} />

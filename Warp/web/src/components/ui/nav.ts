@@ -34,7 +34,7 @@ export const NAV_GROUPS: NavGroup[] = [
       ] },
       { label: 'Caching', icon: Layers, to: '/cache', tabs: [{ to: '/cache', label: 'Caching' }, { to: '/rollups', label: 'Rollups' }] },
       { label: 'Routing & QoS', icon: Route, to: '/routing', tabs: [
-        { to: '/routing', label: 'Routes & admission' }, { to: '/router', label: 'Router rules' }, { to: '/qos', label: 'QoS' }, { to: '/queues', label: 'SQS queues' },
+        { to: '/routing', label: 'Routes & admission' }, { to: '/router', label: 'Router rules' }, { to: '/qos', label: 'QoS' },
       ] },
       { label: 'Policies', icon: Shield, to: '/policies', tabs: [{ to: '/policies', label: 'Policies' }, { to: '/firewall', label: 'SQL firewall' }] },
       { label: 'Access & ACLs', icon: KeyRound, to: '/access', tabs: [
