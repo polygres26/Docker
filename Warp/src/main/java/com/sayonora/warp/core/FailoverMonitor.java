@@ -137,6 +137,13 @@ public final class FailoverMonitor {
         java.util.OptionalDouble heardFromPrimarySecondsAgo(BackendTarget replica, BackendTarget primary) throws Exception;
     }
 
+    /** The primary the shared configuration currently names for a backend (null when it names none). With several Warp instances an
+     * instance can be behind the others for a moment after a switch; it must not treat the new primary as a stale writer. */
+    @FunctionalInterface
+    public interface PrimaryView {
+        String currentPrimaryUrl(String backend) throws Exception;
+    }
+
     /** Stops a stale writable node taking writes (see {@link EngineHa#fenceStaleWriter}). */
     @FunctionalInterface
     public interface StaleWriterFence {
@@ -200,6 +207,7 @@ public final class FailoverMonitor {
      * WARP_FAILOVER_FREEZE_STALE_WRITER=false disables. */
     private volatile StaleWriterFence staleFence = !"false".equalsIgnoreCase(System.getenv("WARP_FAILOVER_FREEZE_STALE_WRITER"))
             ? FailoverMonitor::fenceNode : null;
+    private volatile PrimaryView primaryView;
     private final Map<String, Long> lastStaleFence = new ConcurrentHashMap<>();
     private final java.util.Set<String> staleFenceAnnounced = ConcurrentHashMap.newKeySet();
     private final java.util.Set<String> switchoversInProgress = ConcurrentHashMap.newKeySet();
@@ -261,6 +269,12 @@ public final class FailoverMonitor {
     /** Fluent: replaces (or with null, disables) the replica check made before promoting. */
     public FailoverMonitor withStandbyCheck(StandbyCheck c) {
         this.standbyCheck = c;
+        return this;
+    }
+
+    /** Fluent: lets the monitor confirm against the shared configuration before freezing anything (see {@link PrimaryView}). */
+    public FailoverMonitor withPrimaryView(PrimaryView v) {
+        this.primaryView = v;
         return this;
     }
 
@@ -330,6 +344,9 @@ public final class FailoverMonitor {
             if (last != null && now - last < cooldownMillis) {
                 continue;
             }
+            if (!configAgrees(backend)) {
+                return;
+            }
             String flight = "fence|" + rep.key();
             if (!rejoinsInFlight.add(flight)) {
                 continue;
@@ -360,6 +377,30 @@ public final class FailoverMonitor {
                 rejoinsInFlight.remove(flight);
             }
         }
+    }
+
+    /** True when this instance's primary for {@code backend} is the one the shared configuration names. During a switch another
+     * instance may have moved the backend already: this one still lists the old primary and sees the new primary as a "second writer", and
+     * freezing it would stop the cluster's only real writer. Unable to confirm means do not freeze. */
+    private boolean configAgrees(String backend) {
+        PrimaryView v = primaryView;
+        if (v == null) {
+            return true;
+        }
+        BackendTarget mine = registry.get(backend);
+        try {
+            String shared = v.currentPrimaryUrl(backend);
+            if (mine != null && mine.jdbcUrl().equals(shared)) {
+                return true;
+            }
+            note(backend, "stale-writer-deferred", "this instance lists " + BackendSetModel.maskUrl(mine == null ? "?" : mine.jdbcUrl())
+                    + " as the primary but the shared config names " + (shared == null ? "none" : BackendSetModel.maskUrl(shared))
+                    + "; not freezing anything until its config has reloaded");
+        } catch (Exception e) {
+            note(backend, "stale-writer-deferred", "cannot confirm the primary against the shared config (" + e.getMessage()
+                    + "); not freezing anything");
+        }
+        return false;
     }
 
     /**

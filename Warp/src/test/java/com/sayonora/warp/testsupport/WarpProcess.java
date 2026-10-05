@@ -67,6 +67,15 @@ public final class WarpProcess implements AutoCloseable {
         return p;
     }
 
+    /** SIGSTOP: the instance stops running entirely (probes, config reloads, requests) until {@link #resume()}. */
+    public void pause() throws java.io.IOException, InterruptedException {
+        new ProcessBuilder("kill", "-STOP", String.valueOf(process.pid())).inheritIO().start().waitFor();
+    }
+
+    public void resume() throws java.io.IOException, InterruptedException {
+        new ProcessBuilder("kill", "-CONT", String.valueOf(process.pid())).inheritIO().start().waitFor();
+    }
+
     public int metricsPort() {
         return metricsPort;
     }

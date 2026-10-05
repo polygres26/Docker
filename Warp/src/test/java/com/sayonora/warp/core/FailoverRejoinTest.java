@@ -187,4 +187,35 @@ class FailoverRejoinTest {
             monitor.evaluateOnce(false);
         }
     }
+
+    @Test
+    void anInstanceBehindTheSharedConfigDoesNotFreezeAnything() {
+        setUp();
+        monitor.withRejoiner(null);
+        monitor.withPrimaryView(backend -> OLD); // the shared config already names the other node as primary
+        passes3();
+        assertTrue(fenced.isEmpty(), "this instance's primary is stale: the 'second writer' might be the new real primary");
+        assertTrue(has("stale-writer-deferred"));
+    }
+
+    @Test
+    void anInstanceThatCannotReadTheSharedConfigDoesNotFreezeAnything() {
+        setUp();
+        monitor.withRejoiner(null);
+        monitor.withPrimaryView(backend -> {
+            throw new java.sql.SQLException("config database unreachable");
+        });
+        passes3();
+        assertTrue(fenced.isEmpty());
+        assertTrue(has("stale-writer-deferred"));
+    }
+
+    @Test
+    void anInstanceInAgreementWithTheSharedConfigFreezes() {
+        setUp();
+        monitor.withRejoiner(null);
+        monitor.withPrimaryView(backend -> P);
+        passes3();
+        assertEquals(List.of(OLD), fenced);
+    }
 }
