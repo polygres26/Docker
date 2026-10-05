@@ -38,7 +38,44 @@ final class RealClientWorkloads {
     }
 
     static List<Workload> all() {
-        return List.of(StoreWorkloads.dynamodb(true), StoreWorkloads.kafka(true), secrets(), azblob(), redis());
+        return List.of(StoreWorkloads.dynamodb(true), StoreWorkloads.kafka(true), secrets(), azblob(), redis(),
+                defaults(StoreWorkloads.sqs()), defaults(StoreWorkloads.mongodb()), defaults(StoreWorkloads.s3()),
+                defaults(StoreWorkloads.cql()), defaults(StoreWorkloads.bolt()), defaults(StoreWorkloads.influx()));
+    }
+
+    /** The same workload with its client library at default settings (see {@link StoreWorkloads#sdkDefaults}). */
+    static Workload defaults(Workload w) {
+        return new Workload() {
+            @Override
+            public String name() {
+                return w.name() + "-sdk-defaults";
+            }
+
+            @Override
+            public void configure(WarpProcess.Builder warp, StoreConfig stores) {
+                StoreWorkloads.sdkDefaults = true;
+                w.configure(warp, stores);
+            }
+
+            @Override
+            public void prepare(WarpProcess warp) throws Exception {
+                w.prepare(warp);
+            }
+
+            @Override
+            public Client open(WarpProcess warp) throws Exception {
+                return w.open(warp);
+            }
+
+            @Override
+            public Set<Long> presentIds(WarpProcess warp) throws Exception {
+                try {
+                    return w.presentIds(warp);
+                } finally {
+                    StoreWorkloads.sdkDefaults = false;
+                }
+            }
+        };
     }
 
     // ---- AWS Secrets Manager SDK ---------------------------------------------------------------------------

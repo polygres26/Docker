@@ -37,6 +37,10 @@ final class StoreWorkloads {
     private StoreWorkloads() {
     }
 
+    /** Set (by {@link RealClientWorkloads}) for the "-sdk-defaults" runs: clients are built with their library's own retry,
+     * timeout and reconnect behaviour instead of retries off and short timeouts. Runs are sequential, so one flag is enough. */
+    static volatile boolean sdkDefaults;
+
     private static final StaticCredentialsProvider AWS_CREDS =
             StaticCredentialsProvider.create(AwsBasicCredentials.create("test-access-key", "test-secret-key"));
 
@@ -126,6 +130,10 @@ final class StoreWorkloads {
     // ---- SQS ---------------------------------------------------------------------------------------------
 
     private static SqsClient sqsClient(int port) {
+        if (sdkDefaults) {
+            return SqsClient.builder().endpointOverride(URI.create("http://localhost:" + port)).region(Region.US_EAST_1)
+                    .credentialsProvider(AWS_CREDS).build();
+        }
         return SqsClient.builder().endpointOverride(URI.create("http://localhost:" + port)).region(Region.US_EAST_1)
                 .credentialsProvider(AWS_CREDS)
                 .overrideConfiguration(o -> o.retryPolicy(RetryPolicy.builder().numRetries(0).build())
@@ -197,6 +205,9 @@ final class StoreWorkloads {
     // ---- MongoDB -----------------------------------------------------------------------------------------
 
     private static MongoClient mongo(int port) {
+        if (sdkDefaults) {
+            return MongoClients.create("mongodb://localhost:" + port + "/?directConnection=true");
+        }
         return MongoClients.create("mongodb://localhost:" + port
                 + "/?directConnection=true&retryWrites=false&retryReads=false&serverSelectionTimeoutMS=5000&socketTimeoutMS=10000&connectTimeoutMS=5000");
     }
@@ -252,6 +263,10 @@ final class StoreWorkloads {
     // ---- S3 ----------------------------------------------------------------------------------------------
 
     private static software.amazon.awssdk.services.s3.S3Client s3Client(int port) {
+        if (sdkDefaults) {
+            return software.amazon.awssdk.services.s3.S3Client.builder().endpointOverride(URI.create("http://localhost:" + port))
+                    .region(Region.US_EAST_1).credentialsProvider(AWS_CREDS).forcePathStyle(true).build();
+        }
         return software.amazon.awssdk.services.s3.S3Client.builder().endpointOverride(URI.create("http://localhost:" + port))
                 .region(Region.US_EAST_1).credentialsProvider(AWS_CREDS).forcePathStyle(true)
                 .overrideConfiguration(o -> o.retryPolicy(RetryPolicy.builder().numRetries(0).build())
@@ -426,6 +441,10 @@ final class StoreWorkloads {
     // ---- Cassandra (CQL) ---------------------------------------------------------------------------------
 
     private static com.datastax.oss.driver.api.core.CqlSession cqlSession(int port) {
+        if (sdkDefaults) {
+            return com.datastax.oss.driver.api.core.CqlSession.builder()
+                    .addContactPoint(new java.net.InetSocketAddress("localhost", port)).withLocalDatacenter("datacenter1").build();
+        }
         return com.datastax.oss.driver.api.core.CqlSession.builder()
                 .addContactPoint(new java.net.InetSocketAddress("localhost", port)).withLocalDatacenter("datacenter1")
                 .withConfigLoader(com.datastax.oss.driver.api.core.config.DriverConfigLoader.programmaticBuilder()
@@ -492,6 +511,9 @@ final class StoreWorkloads {
     // ---- Neo4j (Bolt) ------------------------------------------------------------------------------------
 
     private static org.neo4j.driver.Driver boltDriver(int port) {
+        if (sdkDefaults) {
+            return org.neo4j.driver.GraphDatabase.driver("bolt://localhost:" + port, org.neo4j.driver.AuthTokens.basic("warp", "secret"));
+        }
         return org.neo4j.driver.GraphDatabase.driver("bolt://localhost:" + port, org.neo4j.driver.AuthTokens.basic("warp", "secret"),
                 org.neo4j.driver.Config.builder().withConnectionTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
                         .withMaxTransactionRetryTime(0, java.util.concurrent.TimeUnit.SECONDS).build());
@@ -517,14 +539,22 @@ final class StoreWorkloads {
                     @Override
                     public void write(long id) {
                         try (var s = d.session()) {
-                            s.run("CREATE (:Item {id: $id, n: 1})", Map.of("id", id)).consume();
+                            if (sdkDefaults) { // the way an application writes: a managed transaction the driver retries
+                                s.executeWrite(tx -> tx.run("CREATE (:Item {id: $id, n: 1})", Map.of("id", id)).consume());
+                            } else {
+                                s.run("CREATE (:Item {id: $id, n: 1})", Map.of("id", id)).consume();
+                            }
                         }
                     }
 
                     @Override
                     public void read(long id) {
                         try (var s = d.session()) {
-                            s.run("MATCH (n:Item {id: $id}) RETURN n.id", Map.of("id", id)).list();
+                            if (sdkDefaults) { // a managed read transaction, which the driver retries
+                                s.executeRead(tx -> tx.run("MATCH (n:Item {id: $id}) RETURN n.id", Map.of("id", id)).list());
+                            } else {
+                                s.run("MATCH (n:Item {id: $id}) RETURN n.id", Map.of("id", id)).list();
+                            }
                         }
                     }
 
@@ -549,8 +579,9 @@ final class StoreWorkloads {
     // ---- InfluxDB ----------------------------------------------------------------------------------------
 
     private static org.influxdb.InfluxDB influx(int port) {
-        var http = new okhttp3.OkHttpClient.Builder().connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS).retryOnConnectionFailure(false);
+        var http = sdkDefaults ? new okhttp3.OkHttpClient.Builder()
+                : new okhttp3.OkHttpClient.Builder().connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS).retryOnConnectionFailure(false);
         var db = org.influxdb.InfluxDBFactory.connect("http://localhost:" + port, http);
         db.setDatabase("bo");
         return db;

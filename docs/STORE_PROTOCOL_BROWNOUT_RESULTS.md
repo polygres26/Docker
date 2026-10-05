@@ -226,6 +226,48 @@ defaults), the Azure Blob SDK 12.13 and Lettuce 6.3 for Redis. Writes count as f
   letting it end the worker silently, which is how that mistake first showed up as 0 writes and 0 failures.
 - Single runs on localhost, as before. The AWS SDK's retry mode is the SDK's own default, not tuned.
 
+## Phase 8: more client libraries at default settings, and the Bolt fix
+
+The same question as Phase 7 for the remaining protocols that have a real client library on the test classpath: AWS SDK (SQS, S3), the
+MongoDB Java driver (default `retryWrites`/`retryReads`), the DataStax CQL driver, the Neo4j driver (writes and reads as managed
+transactions, the way an application uses it) and influxdb-java.
+
+| protocol | scenario | writes ok | writes failed | max gap around event ms | reads failed | acked | lost |
+|---|---|---|---|---|---|---|---|
+| sqswire (AWS SDK) | switchover | 4494 | 0 | 128 | 0 | 4494 | 0 |
+| sqswire (AWS SDK) | failover | 6340 | 0 | 5087 | 0 | 6340 | 0 |
+| s3wire (AWS SDK) | switchover | 4415 | 0 | 145 | 0 | 4415 | 0 |
+| s3wire (AWS SDK) | failover | 6251 | 0 | 5127 | 0 | 6251 | 0 |
+| mongowire (MongoDB driver) | switchover | 4532 | 3 | 155 | 0 | 4532 | 0 |
+| mongowire (MongoDB driver) | failover | 6367 | 6 | 5285 | 1 | 6367 | 0 |
+| cqlwire (DataStax driver) | switchover | 4264 | 3 | 2262 | 2 | 4264 | 0 |
+| cqlwire (DataStax driver) | failover | 5868 | 6 | 9474 | 4 | 5868 | 0 |
+| boltwire (Neo4j driver), **after the fix** | switchover | 4429 | 0 | 991 | 0 | 4429 | 0 |
+| boltwire (Neo4j driver), **after the fix** | failover | 6029 | 0 | 7658 | 0 | 6029 | 0 |
+| influxwire (influxdb-java) | switchover | 4502 | 3 | 347 | 2 | 4502 | 0 |
+| influxwire (influxdb-java) | failover | 6361 | 7 | 5437 | 4 | 6361 | 0 |
+
+- **SQS and S3: the AWS SDK's retries hide the event** (0 failed), like DynamoDB and Secrets Manager in Phase 7.
+- **Bolt was a real Warp bug, fixed here.** Before, only an exhausted connection pool was reported as `Neo.TransientError`; every other
+  store failure (a terminated connection, a read-only transaction after a demotion, an I/O error) went out as
+  `Neo.DatabaseError.General.UnknownError`, which the Neo4j driver does not retry, and a failure inside a pool proxy surfaced as the opaque
+  `UndeclaredThrowableException`. Store failures are now classified by a new shared `StoreFailures` helper (SQLSTATE 08xxx, 57P0x, 25006,
+  40001, 40P01, 53300, JDBC transient/recoverable exceptions, an exhausted pool) and reported as `Neo.TransientError.General.DatabaseUnavailable`;
+  the wrapper is unwrapped to the real cause. With managed transactions the driver now retries through the event: 0 failed writes and reads
+  in both scenarios (before: 3 and 6 failed writes). The price is a longer wait for the retried call (a 1.0 s gap on a switchover, 7.7 s on a
+  crash, against 0.15 s and 5.2 s for the other protocols). A session that uses plain auto-commit `session.run` is not retried by the driver
+  and still sees the (now correctly typed) error.
+- **MongoDB: not fixed, on purpose.** The failures are error 91 (`ShutdownInProgress`), which the driver treats as retryable, but it only
+  retries a write on a deployment that supports retryable writes, and mongowire's hello does not advertise that. Advertising it would mean
+  implementing transaction-number de-duplication on the server side; claiming it without that risks duplicate writes. Reads are retried once
+  immediately, which does not outlast a 5 s outage.
+- **CQL: not changed.** The driver gets `ServerError` and, with a single contact point, its default policy can only try the next node, so there
+  is none to try (`AllNodesFailedException`). Reporting `Unavailable` instead would tell the driver the write was not applied, which is not
+  known when a connection dies mid-statement. The longer stalls (2.3 s and 9.5 s) look like the driver's reconnection back-off after it marks
+  the node down; I did not isolate that. A deployment with several Warp instances behind a balancer is a different case that I did not measure.
+- **influxdb-java never retries**, so nothing on Warp's side changes what it sees.
+- Single runs on localhost, as before.
+
 ## Not covered yet
 
 Not benchmarked: **A2A** (needs an LLM and writes nothing). KMS and STS were skipped on purpose. AMQP 1.0 is
