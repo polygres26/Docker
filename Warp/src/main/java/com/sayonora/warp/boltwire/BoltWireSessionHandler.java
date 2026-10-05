@@ -214,15 +214,26 @@ public final class BoltWireSessionHandler implements Runnable {
             } catch (CypherException e) {
                 failStatement(e.code(), e.getMessage());
             } catch (SQLException e) {
-                log.warn("boltwire: backend error: {}", e.getMessage());
-                failStatement(e instanceof com.sayonora.warp.core.BackendPoolExhaustedException
-                        ? "Neo.TransientError.General.DatabaseUnavailable" : "Neo.DatabaseError.General.UnknownError",
-                        e.getMessage());
+                backendFailure(e);
             } catch (RuntimeException e) {
-                log.warn("boltwire: unexpected error handling message 0x{}", Integer.toHexString(tag), e);
-                failStatement("Neo.DatabaseError.General.UnknownError", String.valueOf(e));
+                // a pool or lease proxy can wrap the SQLException (UndeclaredThrowableException); report the real cause, not the wrapper
+                SQLException cause = com.sayonora.warp.core.StoreFailures.sqlCause(e);
+                if (cause != null) {
+                    backendFailure(cause);
+                } else {
+                    log.warn("boltwire: unexpected error handling message 0x{}", Integer.toHexString(tag), e);
+                    failStatement("Neo.DatabaseError.General.UnknownError", String.valueOf(e));
+                }
             }
         }
+    }
+
+    /** A Postgres failure while serving a message. A failover, lost connection or exhausted pool is a Neo.TransientError, which the Neo4j
+     * drivers retry (a managed transaction is re-run for up to 30 s); anything else is a database error they do not retry. */
+    private void backendFailure(SQLException e) throws IOException {
+        log.warn("boltwire: backend error: {}", e.getMessage());
+        failStatement(com.sayonora.warp.core.StoreFailures.isTransient(e)
+                ? "Neo.TransientError.General.DatabaseUnavailable" : "Neo.DatabaseError.General.UnknownError", e.getMessage());
     }
 
     /** A message failed: FAILURE goes out, the session ignores everything until RESET, an open transaction is rolled back. */
