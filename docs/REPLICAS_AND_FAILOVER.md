@@ -53,7 +53,10 @@ switch. On that default connection a replica read additionally requires that the
 primary, because its connection carries that user's role and RLS settings. A session on the implicit
 default connection when `WARP_BACKENDS` *is* configured has no replicas and reads the primary. Relay mode
 never routes (it is a raw-byte proxy); Oracle Bridge's server is not a registered backend.
-Both forms were verified end to end with a pgwire client (`ReplicaWireRoutingLiveTest`).
+Both forms were verified end to end with a pgwire client, and the named-backend form with a MySQL client through
+mywire against a MySQL primary and replica (`ReplicaWireRoutingLiveTest`; the mywire test needs
+`WARP_TEST_WIRE_MY_PORTS` too). Note that mywire answers `select @@port`-style system-variable reads itself, so
+they say nothing about which backend served a read.
 
 A replica is eligible when its lag was sampled within ~3 sampling intervals, the probe confirmed it
 is a replica, lag ≤ its `maxLagSeconds`, and it is not quarantined.

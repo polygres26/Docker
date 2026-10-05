@@ -130,4 +130,58 @@ class ReplicaWireRoutingLiveTest {
             }
         }
     }
+
+    /**
+     * Same, through a real MySQL client (Connector/J) and mywire, with a MySQL backend and replica.
+     * WARP_TEST_WIRE_MY_PORTS=primary,replica (GTID or plain async replication, root with no password,
+     * table {@code w.t(id int primary key, v varchar(50))}); the config database is the Postgres from
+     * WARP_TEST_WIRE_PG_PORTS (primary port only).
+     */
+    @Test
+    void readsFromAMySqlClientThroughMywireGoToTheMySqlReplica() throws Exception {
+        String my = System.getenv("WARP_TEST_WIRE_MY_PORTS");
+        String pg = System.getenv("WARP_TEST_WIRE_PG_PORTS");
+        Assumptions.assumeTrue(my != null && pg != null);
+        String[] m = my.split(",");
+        String pgPort = pg.split(",")[0];
+        int primaryPort = Integer.parseInt(m[0]);
+        int replicaPort = Integer.parseInt(m[1]);
+        resetWarpConfig(pgPort);
+        String opts = "?allowPublicKeyRetrieval=true&useSSL=false";
+        String spec = "my=jdbc:mysql://127.0.0.1:" + m[0] + "/w" + opts + "|root|||jdbc:mysql://127.0.0.1:"
+                + m[1] + "/w" + opts + "~10|follow";
+        try (WarpProcess warp = WarpProcess.builder()
+                .pgBackend("127.0.0.1", Integer.parseInt(pgPort), "postgres", "warp", "secret")
+                .frontend("mywire", "WARP_MYWIRE_PORT")
+                .env("WARP_BACKENDS", spec)
+                .env("WARP_REPLICA_LAG_CHECK_SECONDS", "1")
+                .env("WARP_READ_AFTER_WRITE_WINDOW_MS", "1500")
+                .env("WARP_GRPC_PORT", String.valueOf(freePort()))
+                .env("WARP_OTEL_ENDPOINT", "disabled")
+                .start()) {
+            String url = "jdbc:mysql://localhost:" + warp.port("mywire") + "/my?allowPublicKeyRetrieval=true&useSSL=false";
+            try (Connection c = DriverManager.getConnection(url, "warp", "secret")) {
+                c.setAutoCommit(true);
+                Thread.sleep(3500);
+                assertEquals(replicaPort, mysqlPort(c), "a plain read goes to the MySQL replica");
+                c.createStatement().execute("insert into w.t values (777101, 'via-mywire')");
+                assertEquals(primaryPort, mysqlPort(c), "right after a write: primary");
+                Thread.sleep(2200);
+                assertEquals(replicaPort, mysqlPort(c), "back to the replica after the window");
+                try (var st = c.createStatement(); var rs = st.executeQuery("select v from w.t where id = 777101 for update")) {
+                    assertTrue(rs.next());
+                }
+            }
+        }
+    }
+
+    private static int mysqlPort(Connection c) throws Exception {
+        // a FROM clause, so mywire forwards it instead of answering the system variable itself (select @@port is
+        // answered by Warp's own emulation and says nothing about which backend served the read)
+        try (var st = c.createStatement(); var rs = st.executeQuery(
+                "select variable_value from performance_schema.global_variables where variable_name = 'port'")) {
+            rs.next();
+            return rs.getInt(1);
+        }
+    }
 }
