@@ -6,7 +6,7 @@
 # Standard PGXS build, DATA-only (no MODULE_big/OBJS -- nothing to compile).
 
 EXTENSION = pg_sqlserver
-DATA = sql/pg_sqlserver--0.1.sql
+DATA = sql/pg_sqlserver--0.1.sql sql/pg_sqlserver--0.1--0.2.sql
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
