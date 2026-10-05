@@ -47,7 +47,7 @@ is eligible. Otherwise it runs on the primary. If a replica errors, the read is 
 `pg` to use backend `pg`) or is routed to it by a router rule, and, when no `WARP_BACKENDS` is configured,
 a session on the implicit `WARP_*` backend if `WARP_REPLICAS` is set (same grammar as the 5th
 `WARP_BACKENDS` field: `url[~maxLagSeconds][^url...]`). Replicas of the implicit backend are env-only (it is
-not a backend set member, so the UI cannot edit them) and have **failover off**: there is no config entry to
+not a backend set member, so the UI shows them read-only in a "Default backend" card and cannot edit them) and have **failover off**: there is no config entry to
 switch. On that default connection a replica read additionally requires that the session holds no
 `SET`/pin/open-transaction state and is anonymous: a session with a real per-user identity always reads the
 primary, because its connection carries that user's role and RLS settings. A session on the implicit
