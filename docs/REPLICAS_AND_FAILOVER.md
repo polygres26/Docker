@@ -44,11 +44,16 @@ the session has not written in the last `WARP_READ_AFTER_WRITE_WINDOW_MS` (defau
 is eligible. Otherwise it runs on the primary. If a replica errors, the read is retried on the primary.
 
 **Which sessions get replica reads:** a client that selects a backend by database name (connect to database
-`pg` to use backend `pg`) or is routed to it by a router rule. Each such read runs on a fresh connection, on
-a replica when eligible. A session on the implicit `WARP_*` default connection, which is not a
-`WARP_BACKENDS` entry, has no replicas configured and always reads from the primary. Relay mode never routes
-(it is a raw-byte proxy); Oracle Bridge's server is not a registered backend.
-This was verified end to end with a pgwire client (`ReplicaWireRoutingLiveTest`).
+`pg` to use backend `pg`) or is routed to it by a router rule, and, when no `WARP_BACKENDS` is configured,
+a session on the implicit `WARP_*` backend if `WARP_REPLICAS` is set (same grammar as the 5th
+`WARP_BACKENDS` field: `url[~maxLagSeconds][^url...]`). Replicas of the implicit backend are env-only (it is
+not a backend set member, so the UI cannot edit them) and have **failover off**: there is no config entry to
+switch. On that default connection a replica read additionally requires that the session holds no
+`SET`/pin/open-transaction state and is anonymous: a session with a real per-user identity always reads the
+primary, because its connection carries that user's role and RLS settings. A session on the implicit
+default connection when `WARP_BACKENDS` *is* configured has no replicas and reads the primary. Relay mode
+never routes (it is a raw-byte proxy); Oracle Bridge's server is not a registered backend.
+Both forms were verified end to end with a pgwire client (`ReplicaWireRoutingLiveTest`).
 
 A replica is eligible when its lag was sampled within ~3 sampling intervals, the probe confirmed it
 is a replica, lag ≤ its `maxLagSeconds`, and it is not quarantined.

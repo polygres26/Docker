@@ -405,6 +405,29 @@ public final class BackendRegistry {
             }
         } else if (defaultTarget != null) {
             targets.put(DEFAULT_BACKEND_NAME, defaultTarget);
+            // WARP_REPLICAS: read replicas of the implicit single backend, same grammar as the 5th
+            // WARP_BACKENDS field (url[~maxLagSeconds][^url...]). Failover is always off for it: the
+            // implicit backend is not a WARP_BACKENDS entry, so there is no config to switch.
+            String defaultReplicas = System.getenv("WARP_REPLICAS");
+            if (defaultReplicas != null && !defaultReplicas.isBlank()) {
+                try {
+                    List<ReplicaSpec> kept = new java.util.ArrayList<>();
+                    for (ReplicaSpec r : ReplicaSpec.parseList(defaultReplicas)) {
+                        if (trustedHosts.isTrusted(r.url())) {
+                            kept.add(r);
+                        } else {
+                            log.warn("backend registry: REFUSING WARP_REPLICAS entry {} -- its host is not in "
+                                    + "WARP_TRUSTED_BACKEND_HOSTS.", r.url());
+                        }
+                    }
+                    if (!kept.isEmpty()) {
+                        replicaSpecs.put(DEFAULT_BACKEND_NAME, List.copyOf(kept));
+                        failoverModes.put(DEFAULT_BACKEND_NAME, "off");
+                    }
+                } catch (IllegalArgumentException e) {
+                    log.warn("backend registry: ignoring WARP_REPLICAS: {}", e.getMessage());
+                }
+            }
             log.info("backend registry: no WARP_BACKENDS configured -- registered the single "
                     + "implicit WARP_* backend as '{}' so routing/translation has a fallback target",
                     DEFAULT_BACKEND_NAME);
