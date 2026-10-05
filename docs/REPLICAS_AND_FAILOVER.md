@@ -182,7 +182,8 @@ untested.
   `SET (ROLE = SECONDARY)` then `SET HADR RESUME` on each (repeated until it works, because a resume issued right after
   the failover can be accepted and do nothing) and waits for it to synchronize from the new primary. Verified live on
   a three-node AG. **Old primary:** when it returns it is a *second primary* that still takes writes. Warp reports it
-  (`rejoin-needed` plus the split-brain alarm) and leaves it exactly as found: demoting it with
+  (`rejoin-needed` plus the split-brain alarm) and does not demote it (the stale-writer guard below takes it out of service with
+  `ALTER AVAILABILITY GROUP ... OFFLINE`): demoting it with
   `SET (ROLE = SECONDARY)` failed live every time with error 41104, and resuming it would discard whatever it committed
   that the new primary lacks (Warp cannot prove that is nothing: the commit and hardened LSNs move during crash recovery
   even when no user data was written). A DBA must demote or rebuild it. No planned switchover. Live-verified on SQL
@@ -304,9 +305,37 @@ replicating (typically the old primary coming back after a failover) and tries t
 - A node that needs a rebuild but is still writable keeps raising the split-brain alarm, deliberately.
 - Events: `rejoined` (audited), `rejoin-needed`, `rejoin-failed`.
 
-Without external fencing the majority rule is the only protection against promoting while the old
-primary is merely partitioned away from Warp but still serving others. Configure
-`WARP_FAILOVER_FENCE_COMMAND` if that can happen in your network.
+## Split-brain guards
+
+A split brain is two writable nodes for one backend. Besides the promotion rules above (confirmation window, majority of Warp
+instances, lease, optional fence command, fresh re-probe, most-WAL candidate), two guards work over SQL and need no host access.
+Both are on by default and are engine-neutral: each engine supplies its own signal.
+
+**1. A replica that still hears from the "down" primary vetoes the promotion** (`WARP_FAILOVER_STANDBY_CONFIRM`, default `true`;
+`WARP_FAILOVER_STANDBY_HEARD_SECONDS`, default 40). When Warp cannot reach the primary but a replica is still receiving from it over its
+own replication link, the primary is alive and Warp is the one cut off, so promoting would create a second writer. The check runs after the
+fresh re-probe and **before** the fence command (which may power the primary off); a replica that cannot be queried, or cannot tell, is "no
+evidence", never a veto. A real crash leaves no such evidence, so genuine failovers are not delayed.
+
+**2. A stale writable node is frozen** (`WARP_FAILOVER_FREEZE_STALE_WRITER`, default `true`). A node Warp lists as a replica that has been
+writable for the full confirmation window while the configured primary is also writable is a second writer, typically the old primary coming
+back after a failover. Warp treats its configured primary as authoritative, stops the other node taking writes, announces it once
+(`stale-writer-frozen`, audited) and repeats it each cooldown in case a session set it writable again. It never runs during a planned
+switchover. The node is not demoted: it still has to be rebuilt (see rejoin above), but it stops diverging in seconds instead of
+accepting writes until someone notices.
+
+| engine | replica veto: signal | freeze a stale writer | live-verified |
+|---|---|---|---|
+| Postgres | `pg_stat_wal_receiver`: streaming from the primary's host:port, age of `last_msg_receipt_time` (a crash removes the row at once; an idle healthy primary sends about every 30 s, hence the 40 s threshold) | `default_transaction_read_only = on` and client sessions terminated (a session that runs `SET transaction_read_only = off` can still write; superusers included) | yes, through a running Warp, with controls that show both hazards |
+| MySQL | `performance_schema.replication_connection_status`: IO thread `ON`, source host:port matches, age of the later of the last heartbeat and the last queued transaction | `super_read_only = ON` and every other connection killed (no GTIDs needed) | yes, against real mysqld 9.7 (engine level) |
+| SQL Server | the secondary's own row in `dm_hadr_availability_replica_states` reads `CONNECTED` (an idle primary does not advance `last_received_time`, so there is no age: connected counts as 0). Stays `CONNECTED` while an idle primary is alive, flips to `DISCONNECTED` about 13 s after it is killed | `ALTER AVAILABILITY GROUP ... OFFLINE` on a read-scale (`CLUSTER_TYPE = NONE`) AG: role `RESOLVING`, every access fails with error 983 until the instance restarts (it then rejoins as a secondary). `ALTER DATABASE ... SET READ_ONLY / SINGLE_USER` is refused on an availability database (error 1468). A clustered AG is refused: the cluster manager owns it | yes, against a real two-node AG (engine level) |
+| Oracle | none: Warp never promotes Oracle, so there is no promotion to veto | none: unsupported with a clear event (`stale-writer-unfenced`); a Data Guard primary cannot be demoted over SQL and there was no Oracle to verify a restricted-session approach on | n/a |
+
+What the guards do **not** cover: a partition that also cuts the replica off from the primary while clients can still reach the primary (the
+replica then hears nothing, so only the fence command helps, or the majority of Warp instances); two Warp instances with stale
+configuration writing to different nodes (the lease controls who decides, not who writes); and the config database being a single point (Warp
+fails safe and does not promote without it). Without external fencing the majority rule remains the only protection against promoting while the
+old primary is partitioned away from Warp but serving others. Configure `WARP_FAILOVER_FENCE_COMMAND` if that can happen in your network.
 
 ## Metrics and alerts
 

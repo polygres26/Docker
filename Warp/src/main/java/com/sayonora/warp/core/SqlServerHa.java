@@ -6,6 +6,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.OptionalDouble;
 import java.util.OptionalLong;
 import java.util.Properties;
 
@@ -194,6 +195,62 @@ final class SqlServerHa implements EngineHa {
                 v = v.divide(java.math.BigInteger.TEN);
             }
             return OptionalLong.of(v.longValue());
+        }
+    }
+
+    /**
+     * Whether this secondary is connected to its availability group's primary: its own row in {@code dm_hadr_availability_replica_states}
+     * reads {@code CONNECTED}. An idle primary does not advance {@code last_received_time}, so there is no age to report: a connected
+     * secondary answers 0 (the primary is there), a disconnected one answers empty. Measured live: it stays CONNECTED while an idle primary
+     * is alive and flips to DISCONNECTED about 13 s after the primary is killed (the AG session timeout is 10 s). Needs VIEW SERVER STATE.
+     */
+    @Override
+    public OptionalDouble heardFromPrimarySecondsAgo(BackendTarget replica, BackendTarget primary) throws SQLException {
+        try (Connection c = connect(replica); Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery("SELECT CAST(ars.connected_state_desc AS varchar(20)) "
+                        + "FROM sys.dm_hadr_availability_replica_states ars "
+                        + "JOIN sys.availability_databases_cluster adc ON adc.group_id = ars.group_id "
+                        + "WHERE ars.is_local = 1 AND ars.role_desc = 'SECONDARY' AND adc.database_name = DB_NAME()")) {
+            while (rs.next()) {
+                if ("CONNECTED".equalsIgnoreCase(rs.getString(1))) {
+                    return OptionalDouble.of(0);
+                }
+            }
+            return OptionalDouble.empty();
+        }
+    }
+
+    /**
+     * A stale primary (the old primary returning after a forced failover, still PRIMARY and writable) is taken out of service with
+     * {@code ALTER AVAILABILITY GROUP ... OFFLINE}: its role becomes RESOLVING and every access to the database fails with error 983
+     * until the instance is restarted (verified live; the new primary is unaffected and the node comes back as a secondary). Only for a
+     * read-scale AG ({@code CLUSTER_TYPE = NONE}); a clustered AG is owned by the cluster manager. {@code ALTER DATABASE ... SET
+     * READ_ONLY / SINGLE_USER} is not allowed on an availability database (error 1468), which is why this is the only SQL-only way.
+     */
+    @Override
+    public void fenceStaleWriter(BackendTarget node) throws SQLException {
+        java.util.List<String> groups = new java.util.ArrayList<>();
+        try (Connection c = connect(node); Statement st = c.createStatement()) {
+            try (ResultSet rs = st.executeQuery("SELECT ag.name, CAST(ag.cluster_type_desc AS varchar(20)) FROM sys.availability_groups ag "
+                    + "JOIN sys.availability_databases_cluster adc ON adc.group_id = ag.group_id "
+                    + "JOIN sys.dm_hadr_availability_replica_states ars ON ars.group_id = ag.group_id AND ars.is_local = 1 "
+                    + "WHERE adc.database_name = DB_NAME() AND ars.role_desc = 'PRIMARY'")) {
+                while (rs.next()) {
+                    if (!"NONE".equalsIgnoreCase(rs.getString(2))) {
+                        throw new UnsupportedOperationException("availability group '" + rs.getString(1) + "' is " + rs.getString(2)
+                                + "-managed; the cluster manager owns it, not Warp");
+                    }
+                    groups.add(rs.getString(1));
+                }
+            }
+            if (groups.isEmpty()) {
+                throw new UnsupportedOperationException("the database is not in a PRIMARY-role read-scale availability group on "
+                        + "this server, so there is no safe SQL to stop it taking writes");
+            }
+            st.execute("USE master");
+            for (String g : groups) {
+                st.execute("ALTER AVAILABILITY GROUP [" + g.replace("]", "]]") + "] OFFLINE");
+            }
         }
     }
 

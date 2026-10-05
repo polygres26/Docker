@@ -51,6 +51,15 @@ final class OracleHa implements EngineHa {
         return false;
     }
 
+    /** Warp never promotes Oracle, so the "does a standby still hear from the primary" check has nothing to guard (the default, empty,
+     * means no evidence). Stopping a stale Oracle primary taking writes is not attempted: a Data Guard primary cannot be demoted over
+     * SQL and there is no live Oracle here to verify a restricted-session approach on. */
+    @Override
+    public void fenceStaleWriter(BackendTarget node) {
+        throw new UnsupportedOperationException("Warp has no verified SQL to stop an Oracle primary taking writes; stop it or convert "
+                + "it to a standby with Data Guard (DGMGRL / ALTER DATABASE CONVERT TO PHYSICAL STANDBY)");
+    }
+
     // ---- pure logic ---------------------------------------------------------------------------
 
     /** {@code +DD HH:MI:SS[.fff]} (Oracle's INTERVAL DAY TO SECOND text) to seconds; null if not that shape. */

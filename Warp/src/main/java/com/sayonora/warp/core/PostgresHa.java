@@ -6,6 +6,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.OptionalDouble;
 import java.util.OptionalLong;
 import java.util.Properties;
 
@@ -173,6 +174,27 @@ final class PostgresHa implements EngineHa {
             }
         }
         return false;
+    }
+
+    /** {@code pg_stat_wal_receiver}: the standby's WAL receiver is streaming and its sender is {@code primary}. On a crash the row
+     * disappears at once; an idle healthy primary still sends something about every 30 s (wal_sender_timeout / 2), which is why callers
+     * compare the age against a threshold well above that. */
+    @Override
+    public OptionalDouble heardFromPrimarySecondsAgo(BackendTarget replica, BackendTarget primary) throws SQLException {
+        JdbcHostPort want = JdbcHostPort.parse(primary.jdbcUrl(), 5432);
+        try (Connection c = connect(replica); Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery("select status, sender_host, sender_port, "
+                        + "extract(epoch from now() - last_msg_receipt_time) from pg_stat_wal_receiver")) {
+            while (rs.next()) {
+                if (!"streaming".equalsIgnoreCase(rs.getString(1)) || rs.getObject(4) == null) {
+                    continue;
+                }
+                if (rs.getInt(3) == want.port() && HaHosts.sameHost(rs.getString(2), want.host())) {
+                    return OptionalDouble.of(rs.getDouble(4));
+                }
+            }
+            return OptionalDouble.empty();
+        }
     }
 
     @Override

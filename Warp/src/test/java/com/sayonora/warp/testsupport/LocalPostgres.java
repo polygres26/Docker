@@ -81,6 +81,14 @@ public final class LocalPostgres {
         }
     }
 
+    /** Makes the server refuse every new TCP connection to a regular database (replication connections, and so an already running
+     * WAL stream, are not affected): from the outside it looks down, while its standby still hears from it. */
+    public void refuseNewClientConnections() throws Exception {
+        Path hba = dir.resolve("pg_hba.conf");
+        Files.writeString(hba, "host all all 127.0.0.1/32 reject\n" + Files.readString(hba));
+        run(bin + "/pg_ctl", "-D", dir.toString(), "reload");
+    }
+
     public boolean writable() {
         try (Connection c = conn(); var st = c.createStatement(); var rs = st.executeQuery("select pg_is_in_recovery()")) {
             rs.next();

@@ -130,6 +130,19 @@ public final class FailoverMonitor {
         EngineHa.RejoinResult rejoin(BackendTarget node, BackendTarget currentPrimary) throws Exception;
     }
 
+    /** Asks a replica how recently it heard from {@code primary} over its own replication link (see
+     * {@link EngineHa#heardFromPrimarySecondsAgo}). */
+    @FunctionalInterface
+    public interface StandbyCheck {
+        java.util.OptionalDouble heardFromPrimarySecondsAgo(BackendTarget replica, BackendTarget primary) throws Exception;
+    }
+
+    /** Stops a stale writable node taking writes (see {@link EngineHa#fenceStaleWriter}). */
+    @FunctionalInterface
+    public interface StaleWriterFence {
+        void fence(BackendTarget node) throws Exception;
+    }
+
     /** Makes sure the failed primary can no longer take writes (STONITH, firewall, cloud API...).
      * Return false or throw to abort the promotion. */
     @FunctionalInterface
@@ -177,6 +190,19 @@ public final class FailoverMonitor {
     /** Nodes with a rejoin running right now. A rejoin can take minutes (a host-side rebuild), so it runs on its own
      * thread instead of the monitor's: probing and failover decisions keep going while it works. */
     private final java.util.Set<String> rejoinsInFlight = ConcurrentHashMap.newKeySet();
+    /** Before promoting, every reachable replica is asked whether it still hears from the "down" primary: if one does, the primary is
+     * alive and Warp is the one cut off from it, so promoting would make a second writer. WARP_FAILOVER_STANDBY_CONFIRM=false disables. */
+    private volatile StandbyCheck standbyCheck = !"false".equalsIgnoreCase(System.getenv("WARP_FAILOVER_STANDBY_CONFIRM"))
+            ? FailoverMonitor::standbyHeard : null;
+    /** "Heard recently" means within this many seconds: above the ~30 s an idle healthy primary goes without sending anything. */
+    private final double standbyHeardSeconds = doubleEnv("WARP_FAILOVER_STANDBY_HEARD_SECONDS", 40);
+    /** A writable replica while the primary is writable is a stale old primary (or a second writer): freeze it so it stops diverging.
+     * WARP_FAILOVER_FREEZE_STALE_WRITER=false disables. */
+    private volatile StaleWriterFence staleFence = !"false".equalsIgnoreCase(System.getenv("WARP_FAILOVER_FREEZE_STALE_WRITER"))
+            ? FailoverMonitor::fenceNode : null;
+    private final Map<String, Long> lastStaleFence = new ConcurrentHashMap<>();
+    private final java.util.Set<String> staleFenceAnnounced = ConcurrentHashMap.newKeySet();
+    private final java.util.Set<String> switchoversInProgress = ConcurrentHashMap.newKeySet();
     private volatile java.util.concurrent.Executor rejoinExecutor = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "warp-failover-rejoin");
         t.setDaemon(true);
@@ -232,6 +258,40 @@ public final class FailoverMonitor {
         return this;
     }
 
+    /** Fluent: replaces (or with null, disables) the replica check made before promoting. */
+    public FailoverMonitor withStandbyCheck(StandbyCheck c) {
+        this.standbyCheck = c;
+        return this;
+    }
+
+    /** Fluent: replaces (or with null, disables) the freezing of a stale writable node. */
+    public FailoverMonitor withStaleWriterFence(StaleWriterFence f) {
+        this.staleFence = f;
+        return this;
+    }
+
+    private static double doubleEnv(String name, double fallback) {
+        try {
+            String v = System.getenv(name);
+            return v == null || v.isBlank() ? fallback : Double.parseDouble(v.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    static java.util.OptionalDouble standbyHeard(BackendTarget replica, BackendTarget primary) throws Exception {
+        EngineHa ha = EngineHa.forDialect(replica.dialect());
+        return ha == null ? java.util.OptionalDouble.empty() : ha.heardFromPrimarySecondsAgo(replica, primary);
+    }
+
+    static void fenceNode(BackendTarget node) throws Exception {
+        EngineHa ha = EngineHa.forDialect(node.dialect());
+        if (ha == null) {
+            throw new UnsupportedOperationException("unsupported engine");
+        }
+        ha.fenceStaleWriter(node);
+    }
+
     /** Fluent, for tests: where rejoin attempts run ({@code Runnable::run} makes them synchronous). */
     public FailoverMonitor withRejoinExecutor(java.util.concurrent.Executor e) {
         this.rejoinExecutor = e;
@@ -242,6 +302,64 @@ public final class FailoverMonitor {
     public FailoverMonitor withRejoiner(Rejoiner r) {
         this.rejoiner = r;
         return this;
+    }
+
+    /**
+     * The primary is writable and so is a node Warp lists as a replica: two writers, and the configured primary is the one Warp routes
+     * to, so the other is stale (typically the old primary coming back after a failover). Everything it accepts from now on is lost when
+     * it is rebuilt, so stop it taking writes over SQL right away instead of leaving that until the rebuild. Needs the node to have been
+     * writable for the full confirmation window, never runs during a planned switchover, and runs off the monitor thread.
+     */
+    private void freezeStaleWriters(String backend, List<ReplicaRouter.Replica> replicas, List<NodeState> states, int need) {
+        StaleWriterFence f = staleFence;
+        if (f == null || switchoversInProgress.contains(backend)) {
+            return;
+        }
+        long now = clock.getAsLong();
+        for (int i = 0; i < replicas.size(); i++) {
+            ReplicaRouter.Replica rep = replicas.get(i);
+            NodeState st = states.get(i + 1);
+            if (st.role() != NodeRole.WRITABLE) {
+                staleFenceAnnounced.remove(rep.key());
+                continue;
+            }
+            if (st.writableStreak() < need) {
+                continue;
+            }
+            Long last = lastStaleFence.get(rep.key());
+            if (last != null && now - last < cooldownMillis) {
+                continue;
+            }
+            String flight = "fence|" + rep.key();
+            if (!rejoinsInFlight.add(flight)) {
+                continue;
+            }
+            lastStaleFence.put(rep.key(), now);
+            String masked = BackendSetModel.maskUrl(rep.key());
+            Runnable job = () -> {
+                try {
+                    f.fence(rep.target());
+                    if (staleFenceAnnounced.add(rep.key())) {
+                        record(backend, "stale-writer-frozen", masked + " was writable while the primary is writable; it was set "
+                                + "read-only and its client sessions ended so it stops diverging (rebuild it as a replica)",
+                                AuditEvent.Type.BACKEND_FAILOVER);
+                    }
+                } catch (UnsupportedOperationException e) {
+                    note(backend, "stale-writer-unfenced", masked + " is writable but Warp cannot stop it taking writes on "
+                            + rep.target().dialect() + ": " + e.getMessage());
+                } catch (Exception e) {
+                    note(backend, "stale-writer-freeze-failed", masked + ": " + e.getMessage());
+                    log.error("failover: freezing stale writer {} failed: {}", masked, e.toString());
+                } finally {
+                    rejoinsInFlight.remove(flight);
+                }
+            };
+            try {
+                rejoinExecutor.execute(job);
+            } catch (RuntimeException e) {
+                rejoinsInFlight.remove(flight);
+            }
+        }
     }
 
     /**
@@ -338,6 +456,15 @@ public final class FailoverMonitor {
      * a second writer. Allowed in any failover mode except {@code off}.
      */
     public SwitchoverResult switchover(String backend, String targetUrl) {
+        switchoversInProgress.add(backend);
+        try {
+            return doSwitchover(backend, targetUrl);
+        } finally {
+            switchoversInProgress.remove(backend);
+        }
+    }
+
+    private SwitchoverResult doSwitchover(String backend, String targetUrl) {
         if ("off".equals(registry.failoverModeOf(backend))) {
             return new SwitchoverResult(false, "failover is off for '" + backend + "'");
         }
@@ -600,6 +727,7 @@ public final class FailoverMonitor {
             publishObservation(backend, primary.jdbcUrl(), states.get(0).role() != NodeRole.WRITABLE);
         }
         if (states.get(0).role() == NodeRole.WRITABLE) {
+            freezeStaleWriters(backend, replicas, states, need);
             rejoinStragglers(backend, primary, replicas, states);
             for (ReplicaRouter.Replica r : replicas) {
                 ReplicaRouter.LagSample ls = registry.replicaRouter().samplesSnapshot().get(r.key());
@@ -797,6 +925,26 @@ public final class FailoverMonitor {
                 blocked(backend, "re-check before promoting found " + BackendSetModel.maskUrl(n.jdbcUrl())
                         + " writable -- not promoting (a follow-mode switch or recovery will take it from here)");
                 return;
+            }
+        }
+        StandbyCheck sc = standbyCheck;
+        if (sc != null) {
+            // Before anything irreversible (the fence may power the primary off): does any replica still hear from it?
+            for (ReplicaRouter.Replica r : replicas) {
+                if (fresh.getOrDefault(r.key(), NodeRole.UNREACHABLE) != NodeRole.READ_ONLY) {
+                    continue;
+                }
+                try {
+                    java.util.OptionalDouble heard = sc.heardFromPrimarySecondsAgo(r.target(), oldPrimary);
+                    if (heard.isPresent() && heard.getAsDouble() <= standbyHeardSeconds) {
+                        blocked(backend, BackendSetModel.maskUrl(r.key()) + " heard from the primary "
+                                + Math.round(heard.getAsDouble()) + "s ago over its own replication link, so the primary is alive and "
+                                + "Warp is probably cut off from it -- not promoting (that would make a second writer)");
+                        return;
+                    }
+                } catch (Exception e) {
+                    log.debug("failover: standby check of {} failed: {}", r.key(), e.toString());
+                }
             }
         }
         if (h.fencer() != null) {

@@ -1,5 +1,6 @@
 package com.sayonora.warp.core;
 
+import java.util.OptionalDouble;
 import java.util.OptionalLong;
 
 /**
@@ -87,6 +88,25 @@ public interface EngineHa {
      * cannot do that over SQL (the old primary is then left read-only, to be rebuilt by hand). */
     default boolean demoteToReplica(BackendTarget oldPrimary, BackendTarget newPrimary) throws Exception {
         return false;
+    }
+
+    /**
+     * Evidence that the primary is alive although Warp cannot reach it: how many seconds ago {@code replica} last heard from
+     * {@code primary} over its own replication link, or empty when the replica is not connected to that primary (or the engine cannot
+     * tell). A recent answer means the primary is up and Warp is probably the one partitioned, so promoting would create a second writer.
+     * Empty is "no evidence", never "the primary is dead".
+     */
+    default OptionalDouble heardFromPrimarySecondsAgo(BackendTarget replica, BackendTarget primary) throws Exception {
+        return OptionalDouble.empty();
+    }
+
+    /**
+     * Stops a node that is writable but must not be (a stale old primary after a failover) from accepting writes, over SQL, without
+     * restarting it or touching the host. It is a guard against divergence until the node is rebuilt, not a demotion. The default is
+     * {@link #freezeWrites}; engines where that is wrong or unsafe override it or throw {@link UnsupportedOperationException}.
+     */
+    default void fenceStaleWriter(BackendTarget node) throws Exception {
+        freezeWrites(node);
     }
 
     /** False for engines where Warp will follow a promotion made elsewhere but never perform one. */

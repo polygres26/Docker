@@ -9,6 +9,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.OptionalLong;
 import java.util.Properties;
 import java.util.TreeMap;
@@ -312,6 +313,62 @@ final class MySqlHa implements EngineHa {
             }
         }
         return false;
+    }
+
+    /** The replica's replication connection: its IO thread is on, its source is {@code primary}, and the later of the last heartbeat and
+     * the last transaction it queued is how long ago it last heard from it. (A healthy idle source heartbeats every slave_net_timeout / 2,
+     * 30 s by default, so callers compare the age against a threshold above that.) */
+    @Override
+    public OptionalDouble heardFromPrimarySecondsAgo(BackendTarget replica, BackendTarget primary) throws SQLException {
+        JdbcHostPort want = JdbcHostPort.parse(primary.jdbcUrl(), 3306);
+        try (Connection c = connect(replica, 3000, 5000); Statement st = c.createStatement()) {
+            ResultSet first;
+            try {
+                first = st.executeQuery(heardSql("greatest(ifnull(s.LAST_HEARTBEAT_TIMESTAMP, '1970-01-01 00:00:01'), "
+                        + "ifnull(s.LAST_QUEUED_TRANSACTION_END_QUEUE_TIMESTAMP, '1970-01-01 00:00:01'))"));
+            } catch (SQLException e) { // a server without the queued-transaction column: heartbeat only
+                first = st.executeQuery(heardSql("ifnull(s.LAST_HEARTBEAT_TIMESTAMP, '1970-01-01 00:00:01')"));
+            }
+            try (ResultSet rs = first) {
+                while (rs.next()) {
+                    if ("ON".equalsIgnoreCase(rs.getString(3)) && rs.getInt(2) == want.port()
+                            && HaHosts.sameHost(rs.getString(1), want.host()) && rs.getObject(4) != null) {
+                        return OptionalDouble.of(rs.getDouble(4));
+                    }
+                }
+            }
+            return OptionalDouble.empty();
+        }
+    }
+
+    private static String heardSql(String lastHeard) {
+        return "select c.HOST, c.PORT, s.SERVICE_STATE, timestampdiff(microsecond, " + lastHeard + ", now(6)) / 1000000 "
+                + "from performance_schema.replication_connection_status s "
+                + "join performance_schema.replication_connection_configuration c on c.CHANNEL_NAME = s.CHANNEL_NAME";
+    }
+
+    /** {@code super_read_only = ON} and every other client connection killed, so a stale old primary stops taking writes. Unlike
+     * {@link #freezeWrites} it needs no GTIDs: nothing is being caught up, the node only has to stop accepting writes. */
+    @Override
+    public void fenceStaleWriter(BackendTarget node) throws SQLException {
+        try (Connection c = connect(node, 5000, 120000); Statement st = c.createStatement()) {
+            st.execute("SET GLOBAL super_read_only = ON");
+            java.util.List<Long> ids = new java.util.ArrayList<>();
+            try (ResultSet rs = st.executeQuery("select id from information_schema.processlist where id <> connection_id() "
+                    + "and user not in ('system user', 'event_scheduler') and command <> 'Binlog Dump' "
+                    + "and command <> 'Binlog Dump GTID'")) {
+                while (rs.next()) {
+                    ids.add(rs.getLong(1));
+                }
+            }
+            for (long id : ids) {
+                try {
+                    st.execute("KILL CONNECTION " + id);
+                } catch (SQLException ignored) {
+                    // it ended on its own
+                }
+            }
+        }
     }
 
     @Override
