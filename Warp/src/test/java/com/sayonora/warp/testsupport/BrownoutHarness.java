@@ -240,7 +240,16 @@ public final class BrownoutHarness {
 
     private static String abbreviate(Throwable e) {
         String m = String.valueOf(e.getMessage()).replaceAll("\\s+", " ");
-        return e.getClass().getSimpleName() + ": " + (m.length() > 110 ? m.substring(0, 110) : m);
+        String text = e.getClass().getSimpleName() + ": " + (m.length() > 110 ? m.substring(0, 110) : m);
+        Throwable root = e;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        if (root != e) { // a wrapper like "Failed to construct kafka producer" says nothing without its cause
+            String rm = String.valueOf(root.getMessage()).replaceAll("\\s+", " ");
+            text += " <- " + root.getClass().getSimpleName() + ": " + (rm.length() > 140 ? rm.substring(0, 140) : rm);
+        }
+        return text;
     }
 
     private static Summary summarize(ConcurrentLinkedQueue<long[]> ops, long eventMs) {

@@ -139,6 +139,12 @@ public final class WarpProcess implements AutoCloseable {
                         if (line.startsWith("Exception in thread \"main\"")) {
                             fatal.compareAndSet(null, line);
                         }
+                        // a listener this test asked for refused to start (Warp keeps running without it): no point waiting
+                        for (String protocol : ports.keySet()) {
+                            if (line.contains("ERROR") && line.contains(" " + protocol + " failed to start")) {
+                                fatal.compareAndSet(null, line);
+                            }
+                        }
                     }
                 } catch (IOException ignored) {
                     // process ended
