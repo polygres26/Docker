@@ -29,6 +29,11 @@ public interface EngineHa {
      * throw rather than risk losing data it already received. */
     void promote(BackendTarget replica) throws Exception;
 
+    /** False for engines where Warp will follow a promotion made elsewhere but never perform one. */
+    default boolean supportsPromote() {
+        return true;
+    }
+
     /** The implementation for {@code dialect}, or {@code null} when the engine is not supported. */
     static EngineHa forDialect(SourceDialect dialect) {
         if (dialect == null) {
@@ -37,6 +42,7 @@ public interface EngineHa {
         return switch (dialect) {
             case POSTGRES -> PostgresHa.INSTANCE;
             case MYSQL -> MySqlHa.INSTANCE;
+            case ORACLE -> OracleHa.INSTANCE;
             default -> null;
         };
     }

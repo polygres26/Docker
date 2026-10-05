@@ -94,6 +94,29 @@ grammar; add `allowPublicKeyRetrieval`/SSL options to the URL as your authentica
 - Warp does not repoint the remaining replicas (`CHANGE REPLICATION SOURCE`); they leave the read pool
   until their lag probe passes again.
 
+## Oracle Data Guard (follow only, unverified)
+
+**Verification status:** written to Oracle's documentation; Data Guard is not available in any edition
+this project can run in tests, so only the decision logic (role, lag, interval parsing, the
+"never promote" rule) is unit-tested. Treat it as untested against real Data Guard until you have
+tried it in your environment.
+
+- **Topology:** a physical standby opened **read-only with redo apply (Active Data Guard)**. The
+  Warp user needs `SELECT` on `V_$DATABASE` and `V_$DATAGUARD_STATS`.
+- **Lag:** the larger of the standby's *apply lag* and *transport lag* from `V$DATAGUARD_STATS`.
+  Trusted only if the standby is open read-only, an apply-lag value exists, and its statistics were
+  computed within the last 120 s (database clock); otherwise the replica is unmeasurable and never
+  eligible. A standby that is only `MOUNTED` cannot serve reads and cannot be probed by an ordinary
+  login.
+- **Role:** writable only for a `PRIMARY` that is open `READ WRITE`. If the Warp user cannot read
+  `V$DATABASE` the node is reported unreachable (and a warning is logged), never writable.
+- **Failover:** **follow only.** Warp does *not* promote Oracle standbys -- a Data Guard failover loses
+  data if mishandled and cannot be undone. Run it with the Data Guard Broker (Fast-Start Failover or
+  `dgmgrl FAILOVER TO ...`); once the new primary is open `READ WRITE`, `follow` mode repoints the
+  backend at it (this also works for a mounted standby, which becomes visible the moment it opens).
+  `failoverMode=promote` is rejected by the API for Oracle, and a `promote` entry in `WARP_BACKENDS`
+  is monitored but recorded as blocked.
+
 ## Promote mode
 
 `failoverMode=promote` does everything `follow` does, and additionally promotes a replica when the

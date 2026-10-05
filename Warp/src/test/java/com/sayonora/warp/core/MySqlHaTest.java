@@ -60,10 +60,10 @@ class MySqlHaTest {
     }
 
     @Test
-    void mysqlAndPostgresAreSupportedEnginesAndOthersAreNot() {
+    void postgresMysqlAndOracleAreSupportedEnginesAndSqlServerIsNot() {
         assertTrue(EngineHa.forDialect(SourceDialect.MYSQL) != null);
         assertTrue(EngineHa.forDialect(SourceDialect.POSTGRES) != null);
-        assertNull(EngineHa.forDialect(SourceDialect.ORACLE));
+        assertTrue(EngineHa.forDialect(SourceDialect.ORACLE) != null);
         assertNull(EngineHa.forDialect(SourceDialect.SQL_SERVER));
         assertNull(EngineHa.forDialect(null));
     }

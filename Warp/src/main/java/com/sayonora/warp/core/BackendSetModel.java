@@ -317,6 +317,18 @@ public final class BackendSetModel {
         sets.remove(name);
     }
 
+    /** Rejects {@code promote} for an engine Warp can only follow (e.g. Oracle Data Guard). */
+    private static void checkPromoteSupported(String mode, String url) {
+        if (!"promote".equals(mode) || url == null) {
+            return;
+        }
+        EngineHa ha = EngineHa.forDialect(new BackendTarget("x", url, null, null).dialect());
+        if (ha == null || !ha.supportsPromote()) {
+            throw new ModelException(400, "failoverMode 'promote' is not available for this engine: Warp can "
+                    + "follow its failover (mode 'follow') but does not perform it");
+        }
+    }
+
     /** {@code follow} (default), {@code promote} or {@code off}. */
     private static String normalizeFailoverMode(String mode) {
         if (mode == null || mode.isBlank()) {
@@ -366,6 +378,7 @@ public final class BackendSetModel {
             String description, List<StoreType> stores, String replicas, String failoverMode) {
         String normalizedReplicas = normalizeReplicas(replicas);
         String normalizedMode = normalizeFailoverMode(failoverMode);
+        checkPromoteSupported(normalizedMode, url);
         if (set == null || set.isBlank()) {
             throw new ModelException(400, "a backend must be added to a backend set -- 'set' is required");
         }
@@ -455,6 +468,7 @@ public final class BackendSetModel {
         if (newMode != null) {
             updated = updated.withFailoverMode(newMode.isEmpty() ? null : newMode);
         }
+        checkPromoteSupported(updated.failoverMode(), updated.url());
         backends.put(name, updated);
         try {
             validateStores();

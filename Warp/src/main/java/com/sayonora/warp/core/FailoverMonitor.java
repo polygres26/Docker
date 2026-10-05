@@ -423,6 +423,12 @@ public final class FailoverMonitor {
                     + states.get(0).badStreak() + " so far); a manual evaluate cannot shorten it");
             return;
         }
+        EngineHa ha = EngineHa.forDialect(oldPrimary.dialect());
+        if (ha == null || !ha.supportsPromote()) {
+            blocked(backend, "Warp does not promote " + oldPrimary.dialect() + " nodes -- promote it with your "
+                    + "database's own failover tooling and Warp will follow");
+            return;
+        }
         if (inCooldown(backend, "promotion wanted")) {
             return;
         }
