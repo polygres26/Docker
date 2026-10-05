@@ -184,4 +184,49 @@ class ReplicaWireRoutingLiveTest {
             return rs.getInt(1);
         }
     }
+
+    /**
+     * Same, through a real SQL Server client (mssql-jdbc) and mssqlwire, against the read-scale availability group
+     * from {@code Warp/tests/sqlserver-ag/ag.sh up} (sql1 primary on 14331, sql2 readable secondary on 14332).
+     * Opt-in with WARP_TEST_WIRE_MSSQL_AG=1; the config database is the Postgres from WARP_TEST_WIRE_PG_PORTS.
+     */
+    @Test
+    void readsFromASqlServerClientThroughMssqlwireGoToTheAvailabilityGroupSecondary() throws Exception {
+        String pg = System.getenv("WARP_TEST_WIRE_PG_PORTS");
+        Assumptions.assumeTrue("1".equals(System.getenv("WARP_TEST_WIRE_MSSQL_AG")) && pg != null);
+        String pgPort = pg.split(",")[0];
+        resetWarpConfig(pgPort);
+        String opts = ";databaseName=w;encrypt=true;trustServerCertificate=true";
+        String spec = "ms=jdbc:sqlserver://127.0.0.1:14331" + opts + "|sa|Warp_Test_1234!||jdbc:sqlserver://127.0.0.1:14332"
+                + opts + "~10|follow";
+        try (WarpProcess warp = WarpProcess.builder()
+                .pgBackend("127.0.0.1", Integer.parseInt(pgPort), "postgres", "warp", "secret")
+                .frontend("mssqlwire", "WARP_MSSQLWIRE_PORT")
+                .env("WARP_BACKENDS", spec.replace(";", "%3B"))
+                .env("WARP_REPLICA_LAG_CHECK_SECONDS", "1")
+                .env("WARP_READ_AFTER_WRITE_WINDOW_MS", "1500")
+                .env("WARP_GRPC_PORT", String.valueOf(freePort()))
+                .env("WARP_OTEL_ENDPOINT", "disabled")
+                .start()) {
+            String url = "jdbc:sqlserver://localhost:" + warp.port("mssqlwire")
+                    + ";databaseName=ms;encrypt=false;trustServerCertificate=true";
+            try (Connection c = DriverManager.getConnection(url, "warp", "secret")) {
+                c.setAutoCommit(true);
+                Thread.sleep(3500);
+                assertEquals("sql2", mssqlServer(c), "a plain read goes to the secondary");
+                c.createStatement().execute("insert into dbo.t values (777201, 'via-mssqlwire')");
+                assertEquals("sql1", mssqlServer(c), "right after a write: primary");
+                Thread.sleep(2200);
+                assertEquals("sql2", mssqlServer(c), "back to the secondary after the window");
+            }
+        }
+    }
+
+    private static String mssqlServer(Connection c) throws Exception {
+        // a FROM clause so the read is forwarded rather than answered by the wire emulation
+        try (var st = c.createStatement(); var rs = st.executeQuery("select name from sys.servers where server_id = 0")) {
+            rs.next();
+            return rs.getString(1);
+        }
+    }
 }
