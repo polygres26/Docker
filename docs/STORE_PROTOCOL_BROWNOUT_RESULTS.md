@@ -1,4 +1,4 @@
-# Postgres-backed protocols under switchover and failover (phases 1-2: DynamoDB, SQS, MongoDB, S3, Kafka, CQL, Bolt, InfluxDB, OpenSearch)
+# Postgres-backed protocols under switchover and failover (phases 1-3: DynamoDB, SQS, MongoDB, S3, Kafka, CQL, Bolt, InfluxDB, OpenSearch, Redis, GCS, Azure Blob, Pub/Sub, Firestore, Datastore, Cosmos)
 
 Measured on 2026-10-05 with `StoreFailoverBrownoutLiveTest`. Warp serves the protocol over its Postgres backend (the data
 lives in Postgres tables, enabled per backend with `WARP_BACKEND_STORES`), the backend has one streaming replica and
@@ -79,10 +79,44 @@ retries), influxdb-java and the OpenSearch Java client.
   first S3 run failed for exactly that reason. The test harness now also fails fast when a listener it asked for logs
   "failed to start" instead of waiting out the two-minute startup window.
 
+## Phase 3: Redis, Google Cloud Storage, Azure Blob, Pub/Sub, Firestore, Datastore, Cosmos DB
+
+Same setup and caveats, but **driven with my own small clients, not the vendors' SDKs** (their SDKs are not on the test classpath): a
+RESP socket client for Redis, and plain `java.net.http` REST/JSON calls following each service's public API for the others (GCS JSON
+API, Azure Blob REST with a static bearer token, Pub/Sub REST, Firestore and Datastore REST, Cosmos REST with auth disabled). Real SDK
+traffic can differ in headers, retries and request shapes, so treat these as protocol-level results.
+
+| protocol | scenario | writes ok | writes failed | steady max gap ms | max gap around event ms | failed window | reads ok | reads failed | acked | lost | extra |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| rediswire | switchover | 4597 | 3 | 26 | 150 | 3 ms (recovered +26) | 3096 | 1 | 4597 | 0 | 0 |
+| rediswire | failover | 6450 | 6 | 27 | 5278 | 5146 ms (recovered +5170) | 4333 | 4 | 6450 | 0 | 0 |
+| gcswire | switchover | 4427 | 3 | 32 | 154 | 3 ms (recovered +30) | 3053 | 2 | 4427 | 0 | 0 |
+| gcswire | failover | 6144 | 6 | 32 | 5309 | 5139 ms (recovered +5182) | 4264 | 4 | 6144 | 0 | 0 |
+| azblobwire | switchover | 4382 | 3 | 33 | 138 | 24 ms (recovered +30) | 3045 | 2 | 4382 | 0 | 0 |
+| azblobwire | failover | 6140 | 2 | 41 | 5031 | 1 ms (recovered +4919) | 4269 | 1 | 6140 | 0 | 0 |
+| pubsubwire | switchover | 4493 | 3 | 28 | 145 | 8 ms (recovered +25) | 3052 | 2 | 4493 | 0 | 0 |
+| pubsubwire | failover | 6310 | 5 | 30 | 5168 | 5137 ms (recovered +5150) | 4283 | 4 | 6310 | 0 | 0 |
+| firestorewire | switchover | 4428 | 3 | 27 | 155 | 5 ms (recovered +29) | 3035 | 2 | 4428 | 0 | 0 |
+| firestorewire | failover | 5547 | 5 | 43 | 5187 | 5156 ms (recovered +5171) | 3815 | 3 | 5547 | 0 | 0 |
+| datastorewire | switchover | 4033 | 3 | 32 | 147 | 0 ms (recovered +24) | 2740 | 0 | 4033 | 0 | 0 |
+| datastorewire | failover | 5619 | 5 | 32 | 5181 | 5157 ms (recovered +5177) | 3814 | 3 | 5619 | 0 | 0 |
+| cosmoswire | switchover | 4043 | 3 | 32 | 162 | 2 ms (recovered +28) | 2695 | 2 | 4043 | 0 | 0 |
+| cosmoswire | failover | 5627 | 6 | 73 | 5297 | 5153 ms (recovered +5173) | 3673 | 4 | 5627 | 0 | 0 |
+
+- **All seven follow the failover on their own and lost no acknowledged write**, with the same shape as everything else: about
+  140-160 ms stall on a switchover, about 5.0-5.3 s on a crash.
+- **Azure Blob behaves differently on a crash:** only 2 writes failed (against 5-6 for the others) yet writes still stalled for 5 s,
+  so most requests during the outage were held until the new primary was ready instead of being answered with an error.
+- **Redis:** the RESP clients saw errors as `-ERR` replies from the store; none of the 14 cells needed a restart or reconnect to
+  Warp's listener beyond the harness's normal drop-and-reopen after a failed call.
+- Mistakes in my first versions of these workloads (not Warp): Azure container names under 3 characters, Pub/Sub topic ids under 3
+  characters, Cosmos results read only up to the first page (which looked like 991 lost writes until the page size was raised),
+  and Azure needing `WARP_AZURE_DEV_ACCOUNT=true` (Warp refuses to serve unauthenticated).
+
 ## Not covered yet
 
-The remaining Postgres-backed protocols (Redis, AMQP, Pub/Sub, GCS, Azure Blob/Queue/Table, Cosmos, Bigtable, Datastore, Firestore,
-the AWS JSON services (SNS, Kinesis, KMS, SSM, STS, secrets), Gremlin, gRPC, MCP, A2A). Many of them have only unit tests, no
+The remaining Postgres-backed protocols: Azure Queue and Table, the AWS JSON services (SNS, Kinesis, KMS, SSM, STS, secrets),
+AMQP, Gremlin, Bigtable, and Warp's own gRPC, MCP and A2A APIs. Many of them have only unit tests, no
 end-to-end test with a real client at all, so their workloads are being added in groups. Same caveats as the SQL results:
 single runs, localhost, one replica, one Warp instance, no partitions.
 
