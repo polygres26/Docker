@@ -35,17 +35,29 @@ import java.util.Properties;
  * After a forced failover the other secondaries stay suspended, so {@link #repoint} runs
  * {@code SET (ROLE = SECONDARY)} then {@code SET HADR RESUME} on each (repeated, because a resume issued
  * right after the failover can be accepted yet do nothing) and waits for it to synchronize from the new primary.
- * Verified live on a three-node AG. The old primary, when it returns, is a <i>second primary</i> that accepts
- * writes. {@link #rejoin} only <b>reports</b> it: demoting it is not automated, because
- * {@code SET (ROLE = SECONDARY)} on it failed live with error 41104 ("availability group resource did not come
- * online") in every attempt, and resuming it would in any case discard the transactions it committed that the new
- * primary lacks (Warp cannot prove that set is empty: {@code last_commit_lsn} moves during crash recovery even
- * when no user data was written). A DBA has to demote or rebuild it.
+ * Verified live on a three-node AG.
+ *
+ * <p>Planned switchover (read-scale AG): {@link #prepareSwitchover} puts the primary's and the target's replicas in synchronous commit,
+ * requires one synchronized secondary to commit and waits for the target to be SYNCHRONIZED, so a commit is acknowledged only once the target
+ * has hardened it; {@link #promote} then runs {@code FORCE_FAILOVER_ALLOW_DATA_LOSS} on the target (which loses nothing, being synchronized)
+ * and puts the required-secondaries setting back at once, since the new primary has no synchronized secondary yet and would otherwise refuse
+ * access (error 988); {@link #demoteToReplica} resumes the old primary, which the group has by then made a secondary, and restores the modes.
+ * There is nothing to stop beforehand: {@code SET (ROLE = SECONDARY)} on a live primary fails with error 41104 and changes nothing, and
+ * what protects the data is the synchronous commit. Verified live, there and back under write load, with an aborted attempt (target
+ * suspended) leaving nothing changed.
+ *
+ * <p>The old primary after a <i>crash</i> failover is another matter: when its instance starts, a replica of a group with no cluster manager
+ * brings itself online as primary, so it is always a second primary, and no T-SQL demotes it. What works is to take its group offline (its
+ * writes stop, and it stays RESOLVING), restart the instance (it then joins as a secondary) and resume data movement, which discards what it
+ * committed that the new primary lacks. Warp cannot restart an instance, so {@link #rejoin} does that only with
+ * {@code WARP_FAILOVER_REJOIN_COMMAND}; without it the node is reported and the stale-writer guard takes it offline. Verified live.
  * A non-readable
  * secondary rejects ordinary connections (error 978) so it is invisible to the probes until it
  * becomes the primary and starts accepting them.
  */
 final class SqlServerHa implements EngineHa {
+
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(SqlServerHa.class);
 
     static final SqlServerHa INSTANCE = new SqlServerHa();
 
@@ -114,6 +126,10 @@ final class SqlServerHa implements EngineHa {
     // ---- JDBC ---------------------------------------------------------------------------------
 
     private static Connection connect(BackendTarget n) throws SQLException {
+        return connect(n, 8000);
+    }
+
+    private static Connection connect(BackendTarget n, int socketMillis) throws SQLException {
         Properties props = new Properties();
         if (n.user() != null) {
             props.setProperty("user", n.user());
@@ -121,7 +137,7 @@ final class SqlServerHa implements EngineHa {
             props.setProperty("password", pw == null ? "" : pw);
         }
         props.setProperty("loginTimeout", "3");
-        props.setProperty("socketTimeout", "8000");
+        props.setProperty("socketTimeout", String.valueOf(socketMillis));
         return DriverManager.getConnection(n.jdbcUrl(), props);
     }
 
@@ -229,6 +245,18 @@ final class SqlServerHa implements EngineHa {
      */
     @Override
     public void fenceStaleWriter(BackendTarget node) throws SQLException {
+        String command = System.getenv("WARP_FAILOVER_REJOIN_COMMAND");
+        if (command != null && !command.isBlank()) {
+            // The operator gave Warp a way to restart the instance, so the stale primary is not just stopped but brought back: the same
+            // single flow (offline, restart, resume) as a rejoin, so the two never run side by side.
+            rejoin(node, node);
+            return;
+        }
+        takeGroupOffline(node);
+    }
+
+    /** {@code ALTER AVAILABILITY GROUP ... OFFLINE} for the read-scale group that holds the node's database (see {@link #fenceStaleWriter}). */
+    private static void takeGroupOffline(BackendTarget node) throws SQLException {
         java.util.List<String> groups = new java.util.ArrayList<>();
         try (Connection c = connect(node); Statement st = c.createStatement()) {
             try (ResultSet rs = st.executeQuery("SELECT ag.name, CAST(ag.cluster_type_desc AS varchar(20)) FROM sys.availability_groups ag "
@@ -256,31 +284,28 @@ final class SqlServerHa implements EngineHa {
 
     @Override
     public void promote(BackendTarget replica) throws SQLException {
+        String db = dbNameOf(replica);
+        if (db == null) {
+            throw new SQLException("the backend URL has no databaseName, so the availability database is unknown");
+        }
         String group;
-        try (Connection c = connect(replica); Statement st = c.createStatement();
-                ResultSet rs = st.executeQuery("SELECT ag.name, CAST(ag.cluster_type_desc AS varchar(20)), "
-                        + "sys.fn_hadr_is_primary_replica(DB_NAME()) FROM sys.availability_groups ag "
-                        + "JOIN sys.dm_hadr_database_replica_states drs ON drs.group_id = ag.group_id "
-                        + "WHERE drs.is_local = 1 AND drs.database_id = DB_ID()")) {
-            if (!rs.next()) {
-                throw new SQLException("the database is not in an availability group on this server");
-            }
-            group = rs.getString(1);
-            String clusterType = rs.getString(2);
-            int primary = rs.getInt(3);
-            if (rs.next()) {
-                throw new SQLException("the database is in more than one availability group; refusing to guess which to fail over");
-            }
-            if (!"NONE".equalsIgnoreCase(clusterType)) {
-                throw new SQLException("availability group '" + group + "' is managed by a cluster manager ("
-                        + clusterType + "); fail it over with the cluster's own tooling, not behind its back");
-            }
-            if (primary == 1) {
+        // From master: the availability database itself may not be queryable for a moment (right after a change of availability mode, or
+        // while it is being redone), and ALTER AVAILABILITY GROUP has to run from master anyway.
+        try (Connection c = connect(masterOf(replica), 90_000); Statement st = c.createStatement()) {
+            Replica local = localReplica(c, db); // refuses a group a cluster manager owns, and a database in more than one group
+            group = local.group();
+            if ("PRIMARY".equalsIgnoreCase(local.role())) {
                 throw new SQLException("this replica is already the primary");
             }
-            // ALTER AVAILABILITY GROUP must run from master
-            c.setCatalog("master");
-            st.execute("ALTER AVAILABILITY GROUP [" + group.replace("]", "]]") + "] FORCE_FAILOVER_ALLOW_DATA_LOSS");
+            st.execute("ALTER AVAILABILITY GROUP " + bracket(group) + " FORCE_FAILOVER_ALLOW_DATA_LOSS");
+            // A planned switchover required one synchronized secondary so that nothing could be lost. The new primary has none yet
+            // (the old one is still suspended), and with that requirement it refuses every access (error 988) until it has one: put the
+            // original setting back at once, before waiting for it to become writable.
+            Pending prepared = pendingForTarget(replica.jdbcUrl());
+            if (prepared != null) {
+                st.execute("ALTER AVAILABILITY GROUP " + bracket(group) + " SET (REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = "
+                        + prepared.required() + ")");
+            }
         }
         long deadline = System.currentTimeMillis() + 60_000;
         while (role(replica) != FailoverMonitor.NodeRole.WRITABLE) {
@@ -398,28 +423,381 @@ final class SqlServerHa implements EngineHa {
         }
     }
 
+    private final java.util.Set<String> rejoinsRunning = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     /**
-     * Classification only. A node that is a primary of the availability group while Warp's primary is another node
-     * (the old primary, back after a forced failover) is a second writer; Warp reports it and leaves it exactly as
-     * found. See the class comment for why it is not demoted automatically.
+     * What a returned old primary needs. A replica of an availability group with no cluster manager brings itself back online as
+     * <b>primary</b> when its instance starts (the error log says "preparing to transition to the primary role"), so after a forced failover
+     * the old primary is always a second primary, and no T-SQL demotes it: {@code SET (ROLE = SECONDARY)} on a live primary fails with
+     * error 41104 and changes nothing. What does work (verified live) is to take its group offline, which stops its writes and leaves it
+     * RESOLVING, and then restart the instance, after which it joins as a secondary of the real primary; data movement is then resumed,
+     * and SQL Server rolls the node back to the common point, <b>discarding whatever it committed that the new primary lacks</b>.
+     *
+     * <p>Warp cannot restart an instance, so this is the SQL Server counterpart of the Postgres rebuild: with
+     * {@code WARP_FAILOVER_REJOIN_COMMAND} set (a command that restarts the instance; it is given the node and the current primary in its
+     * environment) Warp does offline, restart, wait, resume; without it the node is only reported, and the stale-writer guard takes it
+     * offline.
      */
     @Override
     public RejoinResult rejoin(BackendTarget node, BackendTarget currentPrimary) throws SQLException {
-        try (Connection c = connect(node)) {
-            AgInfo info = agInfo(c);
-            if (info.primary()) {
-                return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "it is a second primary of availability group '"
-                        + info.group() + "' and still takes writes; Warp does not demote it automatically (any "
-                        + "transaction it committed that the new primary lacks would be lost) -- stop writes to it, then "
-                        + "demote it with ALTER AVAILABILITY GROUP " + bracket(info.group()) + " SET (ROLE = SECONDARY) "
-                        + "or rebuild it as a secondary");
-            }
-            if (info.suspended()) {
-                return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "it is a secondary with data movement suspended; "
-                        + "review it, then run ALTER DATABASE " + bracket(info.database()) + " SET HADR RESUME (this "
-                        + "discards any transaction it holds that the new primary lacks)");
-            }
-            return RejoinResult.of(RejoinOutcome.NOT_NEEDED, "already a synchronizing secondary");
+        String db = dbNameOf(node);
+        if (db == null) {
+            return RejoinResult.of(RejoinOutcome.UNSUPPORTED, "the backend URL has no databaseName, so the availability database is unknown");
         }
+        Replica local;
+        try (Connection c = connect(masterOf(node))) {
+            local = localReplica(c, db);
+        }
+        if ("SECONDARY".equalsIgnoreCase(local.role())) {
+            try (Connection c = connect(masterOf(node))) {
+                if (awaitSynchronizingMaster(c, db, 0)) {
+                    return RejoinResult.of(RejoinOutcome.NOT_NEEDED, "already a synchronizing secondary");
+                }
+            }
+            return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "it is a secondary with data movement suspended; review it, then run ALTER "
+                    + "DATABASE " + bracket(db) + " SET HADR RESUME (this discards any transaction it holds that the new primary lacks)");
+        }
+        String command = System.getenv("WARP_FAILOVER_REJOIN_COMMAND");
+        if (command == null || command.isBlank()) {
+            return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "it is a " + local.role().toLowerCase(java.util.Locale.ROOT) + " of '"
+                    + local.group() + "' that is not following the current primary. Bring it back as a secondary by taking the group offline "
+                    + "(ALTER AVAILABILITY GROUP " + bracket(local.group()) + " OFFLINE), restarting the SQL Server instance and then running "
+                    + "ALTER DATABASE " + bracket(db) + " SET HADR RESUME; this discards whatever it committed that the new primary lacks. "
+                    + "Set WARP_FAILOVER_REJOIN_COMMAND to a command that restarts the instance to have Warp do all of it");
+        }
+        if (!rejoinsRunning.add(node.jdbcUrl())) {
+            return RejoinResult.of(RejoinOutcome.NOT_NEEDED, "a rejoin of this node is already running");
+        }
+        try {
+            if ("PRIMARY".equalsIgnoreCase(local.role())) {
+                takeGroupOffline(node); // its writes stop here, and the restart brings it back RESOLVING instead of PRIMARY
+            }
+            String failure = RejoinCommand.run(command, node, currentPrimary, RejoinCommand.timeoutSeconds(), 1433, java.util.Map.of());
+            if (failure != null) {
+                return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, failure);
+            }
+            long deadline = System.currentTimeMillis() + 180_000;
+            while (true) {
+                try (Connection c = connect(masterOf(node), 90_000)) {
+                    if ("SECONDARY".equalsIgnoreCase(localRole(c, db))) {
+                        // a resume right after the restart can be accepted and do nothing yet: repeat it until the node is synchronizing
+                        while (true) {
+                            try {
+                                resumeDatabase(c, db);
+                                if (awaitSynchronizingMaster(c, db, 4_000)) {
+                                    return RejoinResult.of(RejoinOutcome.REJOINED, "taken offline, restarted by the rejoin command and "
+                                            + "resumed as a secondary of '" + local.group() + "'; whatever it committed that the new "
+                                            + "primary lacked was discarded");
+                                }
+                            } catch (SQLException e) {
+                                log.debug("sqlserver: resume not accepted yet: {}", e.getMessage());
+                            }
+                            if (System.currentTimeMillis() > deadline) {
+                                return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "restarted, but it did not start synchronizing in time");
+                            }
+                            sleep(1000);
+                        }
+                    }
+                } catch (SQLException e) {
+                    // still restarting
+                }
+                if (System.currentTimeMillis() > deadline) {
+                    return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "the rejoin command ran but the node did not come back as a "
+                            + "secondary within 180s");
+                }
+                sleep(1000);
+            }
+        } finally {
+            rejoinsRunning.remove(node.jdbcUrl());
+        }
+    }
+
+    // ---- planned switchover (read-scale availability group, CLUSTER_TYPE = NONE) ----------------------------------------------
+
+    /** What {@link #prepareSwitchover} changed, so that it can be put back. */
+    private record Pending(String group, String primaryReplica, String targetReplica, String primaryMode, String targetMode,
+            int required, String targetUrl, String database) {
+    }
+
+    private final java.util.concurrent.ConcurrentHashMap<String, Pending> pending = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private Pending pendingForTarget(String targetUrl) {
+        for (Pending p : pending.values()) {
+            if (p.targetUrl().equals(targetUrl)) {
+                return p;
+            }
+        }
+        return null;
+    }
+
+    /** The database named by the URL ({@code databaseName=} or {@code database=}), or null. */
+    static String dbNameOf(BackendTarget n) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?i)(?:databaseName|database)\\s*=\\s*([^;]+)")
+                .matcher(n.jdbcUrl() == null ? "" : n.jdbcUrl());
+        return m.find() ? m.group(1).trim() : null;
+    }
+
+    /** The same server with {@code master} as its database: a demoted availability database cannot be logged into (error 983), but the
+     * group can still be managed, and its replica states read, from master. */
+    static BackendTarget masterOf(BackendTarget n) {
+        String url = n.jdbcUrl();
+        String master = url.matches("(?i).*(databaseName|database)\\s*=.*")
+                ? url.replaceAll("(?i)(databaseName|database)\\s*=\\s*[^;]+", "databaseName=master") : url + ";databaseName=master";
+        return new BackendTarget(n.name(), master, n.user(), n.password(), n.failoverOptions(), n.fallbackName(), n.connectorOperand());
+    }
+
+    private record Replica(String group, String clusterType, String replicaName, String mode, int required, String role) {
+    }
+
+    /** This server's replica of the availability group that holds {@code db}, as seen from master. */
+    private static Replica localReplica(Connection master, String db) throws SQLException {
+        try (java.sql.PreparedStatement ps = master.prepareStatement(
+                "SELECT ag.name, CAST(ag.cluster_type_desc AS varchar(20)), r.replica_server_name, "
+                        + "CAST(r.availability_mode_desc AS varchar(30)), ag.required_synchronized_secondaries_to_commit, "
+                        + "CAST(ars.role_desc AS varchar(20)) FROM sys.availability_groups ag "
+                        + "JOIN sys.availability_databases_cluster adc ON adc.group_id = ag.group_id AND adc.database_name = ? "
+                        + "JOIN sys.dm_hadr_availability_replica_states ars ON ars.group_id = ag.group_id AND ars.is_local = 1 "
+                        + "JOIN sys.availability_replicas r ON r.replica_id = ars.replica_id")) {
+            ps.setString(1, db);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    throw new SQLException("database '" + db + "' is not in an availability group on this server");
+                }
+                Replica r = new Replica(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getInt(5),
+                        rs.getString(6));
+                if (rs.next()) {
+                    throw new SQLException("the database is in more than one availability group; refusing to guess");
+                }
+                if (!"NONE".equalsIgnoreCase(r.clusterType())) {
+                    throw new SQLException("availability group '" + r.group() + "' is managed by a cluster manager ("
+                            + r.clusterType() + "); fail it over with the cluster's own tooling");
+                }
+                return r;
+            }
+        }
+    }
+
+    private static String literal(String s) {
+        return "N'" + s.replace("'", "''") + "'";
+    }
+
+    @Override
+    public boolean supportsSwitchover() {
+        return true;
+    }
+
+    /**
+     * Puts the primary's replica and the target's in synchronous commit, requires one synchronized secondary to commit, and waits until the
+     * target is SYNCHRONIZED: from then on a commit is acknowledged only once the target has hardened it, so the demotion that follows
+     * cannot lose one. Undoes all of it and throws when the target does not synchronize in time.
+     */
+    @Override
+    public void prepareSwitchover(BackendTarget primary, BackendTarget target) throws SQLException {
+        String db = dbNameOf(primary);
+        if (db == null) {
+            throw new SQLException("the backend URL has no databaseName, so the availability database is unknown");
+        }
+        Replica p;
+        Replica t;
+        try (Connection pc = connect(masterOf(primary), 90_000); Connection tc = connect(masterOf(target))) {
+            p = localReplica(pc, db);
+            t = localReplica(tc, db);
+            if (!"PRIMARY".equalsIgnoreCase(p.role())) {
+                throw new SQLException("the current primary is not the primary replica of '" + p.group() + "'");
+            }
+            if (!"SECONDARY".equalsIgnoreCase(t.role()) || !t.group().equals(p.group())) {
+                throw new SQLException("the target is not a secondary replica of '" + p.group() + "'");
+            }
+            Pending prepared = new Pending(p.group(), p.replicaName(), t.replicaName(), p.mode(), t.mode(), p.required(),
+                    target.jdbcUrl(), db);
+            if (pending.putIfAbsent(primary.jdbcUrl(), prepared) != null) {
+                throw new SQLException("a switchover of this backend is already prepared or running");
+            }
+            try (Statement st = pc.createStatement()) {
+                st.execute("ALTER AVAILABILITY GROUP " + bracket(p.group()) + " MODIFY REPLICA ON " + literal(p.replicaName())
+                        + " WITH (AVAILABILITY_MODE = SYNCHRONOUS_COMMIT)");
+                st.execute("ALTER AVAILABILITY GROUP " + bracket(p.group()) + " MODIFY REPLICA ON " + literal(t.replicaName())
+                        + " WITH (AVAILABILITY_MODE = SYNCHRONOUS_COMMIT)");
+                st.execute("ALTER AVAILABILITY GROUP " + bracket(p.group()) + " SET (REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 1)");
+            }
+            long deadline = System.currentTimeMillis() + Long.parseLong(
+                    System.getenv().getOrDefault("WARP_SWITCHOVER_SYNC_SECONDS", "30")) * 1000;
+            while (!synchronizationState(tc, db).equalsIgnoreCase("SYNCHRONIZED")) {
+                if (System.currentTimeMillis() > deadline) {
+                    restoreModes(pc, prepared);
+                    pending.remove(primary.jdbcUrl());
+                    throw new SQLException("the target did not reach SYNCHRONIZED within the time allowed (state: "
+                            + synchronizationState(tc, db) + "); modes restored");
+                }
+                sleep(500);
+            }
+        }
+    }
+
+    private static String synchronizationState(Connection master, String db) throws SQLException {
+        try (java.sql.PreparedStatement ps = master.prepareStatement(
+                "SELECT CAST(synchronization_state_desc AS varchar(30)) FROM sys.dm_hadr_database_replica_states "
+                        + "WHERE is_local = 1 AND database_id = DB_ID(?)")) {
+            ps.setString(1, db);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? String.valueOf(rs.getString(1)) : "UNKNOWN";
+            }
+        }
+    }
+
+    private static java.math.BigDecimal hardenedLsn(Connection master, String db) throws SQLException {
+        try (java.sql.PreparedStatement ps = master.prepareStatement(
+                "SELECT last_hardened_lsn FROM sys.dm_hadr_database_replica_states WHERE is_local = 1 AND database_id = DB_ID(?)")) {
+            ps.setString(1, db);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && rs.getBigDecimal(1) != null ? rs.getBigDecimal(1) : null;
+            }
+        }
+    }
+
+    /** Puts the availability and required-secondaries settings a switchover changed back as they were. */
+    private static void restoreModes(Connection master, Pending p) throws SQLException {
+        try (Statement st = master.createStatement()) {
+            st.execute("ALTER AVAILABILITY GROUP " + bracket(p.group()) + " SET (REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = "
+                    + p.required() + ")");
+            st.execute("ALTER AVAILABILITY GROUP " + bracket(p.group()) + " MODIFY REPLICA ON " + literal(p.primaryReplica())
+                    + " WITH (AVAILABILITY_MODE = " + p.primaryMode() + ")");
+            st.execute("ALTER AVAILABILITY GROUP " + bracket(p.group()) + " MODIFY REPLICA ON " + literal(p.targetReplica())
+                    + " WITH (AVAILABILITY_MODE = " + p.targetMode() + ")");
+        }
+    }
+
+    /** The role of this server's replica as seen from master ({@code PRIMARY}, {@code SECONDARY}, {@code RESOLVING}). */
+    private static String localRole(Connection master, String db) throws SQLException {
+        try {
+            return localReplica(master, db).role();
+        } catch (SQLException e) {
+            return "UNKNOWN";
+        }
+    }
+
+    /**
+     * There is nothing to stop on a SQL Server primary, and nothing to demote: {@code SET (ROLE = SECONDARY)} on a live primary fails with
+     * error 41104 and changes nothing (verified live: the role stays PRIMARY and writes keep succeeding). What makes the switchover safe is
+     * what {@link #prepareSwitchover} set up: with one synchronized secondary required to commit, a commit is acknowledged only after the
+     * target has hardened it, so every acknowledged write is on the target; and once the target is promoted the old primary can commit
+     * nothing (error 988, "lacks a quorum") until the group demotes it. A transaction that was still waiting for its acknowledgement then
+     * is rolled back, which its client sees as an error, never as a success. This only checks that the preparation is still in place.
+     */
+    @Override
+    public void freezeWrites(BackendTarget primary) throws SQLException {
+        if (!pending.containsKey(primary.jdbcUrl())) {
+            throw new SQLException("no switchover was prepared for this backend");
+        }
+    }
+
+    /** The target is SYNCHRONIZED with the primary: it has hardened every commit the primary acknowledged. */
+    @Override
+    public void awaitCaughtUp(BackendTarget primary, BackendTarget replica, long timeoutSeconds) throws SQLException {
+        String db = dbNameOf(primary);
+        long deadline = System.currentTimeMillis() + timeoutSeconds * 1000;
+        try (Connection rc = connect(masterOf(replica))) {
+            while (!synchronizationState(rc, db).equalsIgnoreCase("SYNCHRONIZED")) {
+                if (System.currentTimeMillis() > deadline) {
+                    throw new SQLException("the target is " + synchronizationState(rc, db) + ", not SYNCHRONIZED");
+                }
+                sleep(300);
+            }
+        }
+    }
+
+    /** Aborting before the target was promoted: puts the availability modes and the required-secondaries setting back, on whichever of
+     * the two is the primary now. Nothing was demoted or stopped, so nothing else needs undoing. */
+    @Override
+    public void unfreezeWrites(BackendTarget primary) throws SQLException {
+        Pending p = pending.remove(primary.jdbcUrl());
+        if (p == null) {
+            return;
+        }
+        BackendTarget target = new BackendTarget(primary.name() + "-target", p.targetUrl(), primary.user(), primary.password(),
+                primary.failoverOptions(), primary.fallbackName(), primary.connectorOperand());
+        for (BackendTarget node : new BackendTarget[] {primary, target}) {
+            try (Connection c = connect(masterOf(node), 90_000)) {
+                if ("PRIMARY".equalsIgnoreCase(localRole(c, p.database()))) {
+                    restoreModes(c, p);
+                    return;
+                }
+            } catch (SQLException e) {
+                // that node is unreachable: try the other
+            }
+        }
+        throw new SQLException("neither node is the primary of '" + p.group() + "': the availability modes were left as the switchover "
+                + "set them (synchronous commit, one required synchronized secondary)");
+    }
+
+    private static void resumeDatabase(Connection master, String db) throws SQLException {
+        try (Statement st = master.createStatement()) {
+            st.execute("ALTER DATABASE " + bracket(db) + " SET HADR RESUME");
+        }
+    }
+
+    private static boolean awaitSynchronizingMaster(Connection master, String db, long timeoutMillis) throws SQLException {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        do { // always looks at least once
+            try (java.sql.PreparedStatement ps = master.prepareStatement(
+                    "SELECT CAST(is_suspended AS int), CAST(synchronization_state_desc AS varchar(30)) "
+                            + "FROM sys.dm_hadr_database_replica_states WHERE is_local = 1 AND database_id = DB_ID(?)")) {
+                ps.setString(1, db);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next() && rs.getInt(1) == 0 && ("SYNCHRONIZING".equalsIgnoreCase(rs.getString(2))
+                            || "SYNCHRONIZED".equalsIgnoreCase(rs.getString(2)))) {
+                        return true;
+                    }
+                }
+            }
+            sleep(500);
+        } while (System.currentTimeMillis() < deadline);
+        return false;
+    }
+
+    private static void sleep(long millis) throws SQLException {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SQLException("interrupted", e);
+        }
+    }
+
+    /**
+     * After the target has been promoted: resume the old primary (now a secondary) so it synchronizes from the new primary, then put the
+     * availability modes back on the new primary. Returns true: the old primary replicates again.
+     */
+    @Override
+    public boolean demoteToReplica(BackendTarget oldPrimary, BackendTarget newPrimary) throws SQLException {
+        Pending p = pending.get(oldPrimary.jdbcUrl());
+        if (p == null) {
+            return false;
+        }
+        try (Connection oc = connect(masterOf(oldPrimary), 90_000)) {
+            long deadline = System.currentTimeMillis() + 90_000;
+            // The old primary is demoted by the group once the new primary has taken over, which takes a moment; until then a resume is
+            // refused, or accepted and ignored: repeat it until the node is synchronizing.
+            while (true) {
+                try {
+                    resumeDatabase(oc, p.database());
+                    if (awaitSynchronizingMaster(oc, p.database(), 4_000)) {
+                        break;
+                    }
+                } catch (SQLException e) {
+                    log.debug("sqlserver: resume of the old primary not accepted yet: {}", e.getMessage());
+                }
+                if (System.currentTimeMillis() > deadline) {
+                    throw new SQLException("the old primary did not start synchronizing from the new primary within 90s");
+                }
+                sleep(1000);
+            }
+        }
+        try (Connection nc = connect(masterOf(newPrimary), 90_000)) {
+            restoreModes(nc, p);
+        } finally {
+            pending.remove(oldPrimary.jdbcUrl());
+        }
+        return true;
     }
 }

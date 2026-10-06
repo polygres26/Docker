@@ -307,40 +307,13 @@ final class PostgresHa implements EngineHa {
      * checks the node really came back as a standby. */
     static RejoinResult runRejoinCommand(String command, BackendTarget node, BackendTarget primary, long timeoutSeconds) {
         try {
-            ProcessBuilder pb = new ProcessBuilder("sh", "-c", command).redirectErrorStream(true);
-            java.util.Map<String, String> env = pb.environment();
-            env.put("WARP_REJOIN_NODE_URL", node.jdbcUrl());
-            env.put("WARP_REJOIN_PRIMARY_URL", primary.jdbcUrl());
-            java.net.URI u = java.net.URI.create(primary.jdbcUrl().substring("jdbc:".length()));
-            env.put("WARP_REJOIN_PRIMARY_HOST", u.getHost());
-            env.put("WARP_REJOIN_PRIMARY_PORT", String.valueOf(u.getPort() < 0 ? 5432 : u.getPort()));
-            env.put("WARP_REJOIN_PRIMARY_USER", primary.user() == null ? "" : primary.user());
-            String pw = SecretResolver.resolve(primary.password());
-            if (pw != null) {
-                env.put("PGPASSWORD", pw);
+            String pw = RejoinCommand.password(primary);
+            String failure = RejoinCommand.run(command, node, primary, timeoutSeconds, 5432,
+                    pw == null ? java.util.Map.of() : java.util.Map.of("PGPASSWORD", pw));
+            if (failure != null) {
+                return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, failure);
             }
-            Process p = pb.start();
-            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-            Thread drain = new Thread(() -> {
-                try {
-                    p.getInputStream().transferTo(out);
-                } catch (java.io.IOException ignored) {
-                    // process ended
-                }
-            }, "warp-rejoin-output");
-            drain.setDaemon(true);
-            drain.start();
-            if (!p.waitFor(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS)) {
-                p.destroyForcibly();
-                return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "the rejoin command did not finish within "
-                        + timeoutSeconds + "s and was stopped");
-            }
-            drain.join(1000);
-            String tail = tail(out.toString());
-            if (p.exitValue() != 0) {
-                return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "the rejoin command failed (exit "
-                        + p.exitValue() + "): " + tail);
-            }
+            String tail = "";
             long deadline = System.currentTimeMillis() + 30_000;
             while (System.currentTimeMillis() < deadline) {
                 try (Connection c = connect(node); Statement st = c.createStatement();

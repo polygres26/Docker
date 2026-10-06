@@ -108,6 +108,10 @@ public final class FailoverMonitor {
 
     /** The engine steps of a planned switchover; defaults dispatch through {@link EngineHa}. */
     public interface SwitchoverOps {
+        /** Before writes are stopped; see {@link EngineHa#prepareSwitchover}. */
+        default void prepare(BackendTarget primary, BackendTarget target) throws Exception {
+        }
+
         void freeze(BackendTarget primary) throws Exception;
 
         void unfreeze(BackendTarget primary) throws Exception;
@@ -233,6 +237,11 @@ public final class FailoverMonitor {
                 throw new IllegalStateException("planned switchover is not supported for " + t.dialect());
             }
             return h;
+        }
+
+        @Override
+        public void prepare(BackendTarget p, BackendTarget t) throws Exception {
+            ha(p).prepareSwitchover(p, t);
         }
 
         @Override
@@ -618,6 +627,11 @@ public final class FailoverMonitor {
         String pm = BackendSetModel.maskUrl(primary.jdbcUrl());
         String tm = BackendSetModel.maskUrl(target.jdbcUrl());
         long timeout = longEnv("WARP_SWITCHOVER_CATCHUP_SECONDS", 30);
+        try {
+            ops.prepare(primary, target);
+        } catch (Exception e) {
+            return aborted(backend, "could not prepare " + tm + " for a switchover: " + e.getMessage() + " -- nothing changed");
+        }
         try {
             ops.freeze(primary);
         } catch (Exception e) {
