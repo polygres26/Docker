@@ -125,7 +125,7 @@ grammar; add `allowPublicKeyRetrieval`/SSL options to the URL as your authentica
   replicas using GTID auto-positioning are repointed; a replica on binlog file/offset coordinates is
   refused (Warp cannot know the matching position on the new primary) and left as it was.
 
-## Oracle Data Guard (follow only, unverified)
+## Oracle Data Guard (follow only by default, unverified)
 
 **Verification status:** written to Oracle's documentation; Data Guard is not available in any edition
 this project can run in tests, so only the decision logic (role, lag, interval parsing, the
@@ -147,6 +147,32 @@ tried it in your environment.
   backend at it (this also works for a mounted standby, which becomes visible the moment it opens).
   `failoverMode=promote` is rejected by the API for Oracle, and a `promote` entry in `WARP_BACKENDS`
   is monitored but recorded as blocked.
+
+### Optional: driving Data Guard from Warp (`WARP_ORACLE_DATAGUARD_CONTROL=true`) -- **never run against a real Data Guard**
+
+Off by default. Switched on, Warp can perform a **planned switchover** and an automatic **failover** of a physical standby with SQL, so Oracle gets
+`promote` mode and the switchover API like the other engines. **This has been written to Oracle's documentation and tested only against a scripted fake
+database** (it enforces the documented preconditions of each statement, so it checks Warp's sequence, preflight and error handling; it says nothing
+about whether the statements behave so on a real configuration). No Oracle edition with Data Guard was available. Rehearse it in staging before relying on it.
+
+Requirements: a SYSDBA account (the backend user, e.g. `sys as sysdba`; the administrative connections set `internal_logon=sysdba`); **no Data Guard
+Broker** on either database (`DG_BROKER_START=FALSE`; behind the broker's back it loses track, so Warp refuses and says to use `dgmgrl SWITCHOVER`); redo
+transport already configured in both directions; the standby open read only with redo apply for Warp to see it as a replica.
+
+- **Switchover** (`POST /api/failover/{backend}/switchover`): preflight (primary is a PRIMARY with `SWITCHOVER_STATUS` `TO STANDBY` or `SESSIONS ACTIVE`, the
+  target is a physical standby, no broker; nothing is changed if any of that is wrong), then `ALTER DATABASE COMMIT TO SWITCHOVER TO PHYSICAL STANDBY WITH
+  SESSION SHUTDOWN` on the primary (it ends every session, flushes and sends the end-of-redo marker, so nothing can write to it), wait until the standby's
+  `SWITCHOVER_STATUS` is `TO PRIMARY` (starting redo apply if it reports `RECOVERY NEEDED`), `ALTER DATABASE COMMIT TO SWITCHOVER TO PRIMARY WITH SESSION
+  SHUTDOWN` on the standby and `ALTER DATABASE OPEN` if it is only mounted, and finally the old primary is opened and redo apply started on it. An abort before
+  the standby took over switches the old primary back (starting redo apply and waiting for it to report it can become the primary first); if that does not
+  work in time Warp **says so** (the old primary is a standby and there is no primary) rather than reporting writes re-enabled.
+- **Failover** (`promote` mode, primary down): the usual safeguards (confirmation window, lease, majority, lag gate, optional fence), the standby with the highest
+  received change number (`V$ARCHIVED_LOG` `NEXT_CHANGE#`) is chosen, then `ALTER DATABASE FAILOVER TO <db_unique_name>` (12.1 and later) and
+  `ALTER DATABASE OPEN`. A failover discards the redo the standby did not receive and **cannot be undone**: the old primary has to be reinstated
+  (Flashback Database) or rebuilt, which Warp does not do, and Warp has no signal that a standby still hears from the primary, so the replica veto of
+  the split-brain guards does not apply to Oracle (use the fence command if the primary may still be reachable by others).
+- Not done: other standbys are not repointed (a standby follows its primary through the Data Guard configuration), a returned old primary is not
+  rejoined, and a stale second primary cannot be stopped with SQL.
 
 ## SQL Server Availability Groups (follow, promote and planned switchover)
 
@@ -263,7 +289,8 @@ promotions Warp performs; in `follow` mode whoever promoted is responsible for t
 
 The Replicas page has a "Make primary" button on each replica (with a confirmation step) that calls this API.
 `POST /api/failover/{backend}/switchover` with `{"target": "<replica url>"}` (admin role) swaps the primary
-on purpose, without losing a committed transaction. Postgres, MySQL and SQL Server (read-scale availability groups); not Oracle. Allowed in
+on purpose, without losing a committed transaction. Postgres, MySQL and SQL Server (read-scale availability groups); Oracle only with
+`WARP_ORACLE_DATAGUARD_CONTROL=true` and **unverified** (see its section). Allowed in
 `follow` or `promote` mode (not `off`). SQL Server does not follow the freeze, catch-up, promote steps below: it prepares synchronous commit, promotes the
 synchronized target and resumes the old primary instead (see its section).
 
@@ -288,7 +315,7 @@ replicating**: making a running primary a standby needs a restart with `standby.
 `pg_rewind`) on the host, which Warp cannot do over SQL. **MySQL: the old primary becomes a GTID replica
 using the backend's own user/password as the replication account** (so that user needs REPLICATION SLAVE;
 `GET_SOURCE_PUBLIC_KEY=1` is used so caching_sha2 works without TLS). **SQL Server: the old primary becomes a synchronizing secondary of the new primary.**
-Oracle is not supported.
+**Oracle (opt-in, unverified): the old primary is opened read only and redo apply started.**
 
 ### Rejoining a returned old primary
 
