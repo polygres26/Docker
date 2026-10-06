@@ -428,6 +428,25 @@ qualifier needed anywhere), and the router picks the real fastest path per state
   be a different subset of backends than any OTHER declaratively-sharded table uses, unlike
   `ShardRule`'s one shared `registry.shardGroup()`.
 
+- **An `INSERT` into the table** carries its shard key in the `VALUES` list, not in a predicate, so the predicate matcher above never saw it:
+  before this was handled every insert fell through to the *default* backend, which is not a shard (or is only one of them), and the row then
+  sat on a node no keyed read looks at. `InsertShardKey` now reads `INSERT [INTO] <table> (<columns>) VALUES (...)[, (...)]` and routes it to
+  the shard that owns the key, using the same `ShardingStrategy` as a keyed read, so a row is always read from the shard it was written to. It
+  understands each dialect's quoting (`"x"`, `` `x` ``, `[x]`), `INSERT` without `INTO`, `VALUE`, comments, string literals, schema-qualified
+  names, and the `?`, `$n` and `:n` bind forms; trailing `ON CONFLICT`, `ON DUPLICATE KEY UPDATE` and `RETURNING` are ignored. What it cannot
+  resolve with certainty is **refused with the reason** (`ERR_SHARD_INSERT_UNROUTABLE`) instead of guessed: no column list, `INSERT ... SELECT`,
+  `DEFAULT VALUES`, a shard key that is `NULL`, `DEFAULT`, an expression or a named bind, or no bind value. A multi-row insert whose rows belong to
+  different shards is refused too (`ERR_SHARD_INSERT_SPANS_SHARDS`): split it per shard (Warp does not split it, because the parts would not be
+  atomic). `UPDATE` and `DELETE` on a sharded table are routed only when they carry a `column = value` predicate on the key; without one they are
+  still sent to the default backend, which is a known gap, not a design.
+- **Shards and replicas.** Each shard is an ordinary backend, so it can have its own replicas and its own failover mode: a keyed read, and each
+  member of a scatter-gather read, can be served by that shard's replica, and a shard whose primary fails over does so on its own while the other
+  shards keep serving. Live-verified on Postgres and on MySQL (`ShardedReplicaFailoverLiveTest`): two hash shards each with a replica in `promote`
+  mode, 100 rows inserted and read back by key, a scatter-gather `SUM` served by the replicas, one shard's primary killed under write load and
+  its replica promoted, a planned switchover of the other shard under the same load, and every acknowledged write present afterwards, none twice.
+  Not live-verified: SQL Server and Oracle shards with replicas (the router logic is dialect-neutral and unit-tested with all four dialects'
+  syntax, but a SQL Server availability group and Oracle Data Guard were not run as shards here).
+
 `WARP_ROUTER_SHARD_TABLES`/`WARP_ROUTER_VALUE_SHARD_RULES` keep working unchanged for
 anyone not migrating — this is additive, not a replacement. Real vertical/functional sharding
 (a whole table routed to one specific backend, no partitioning) is unaffected too; that's still

@@ -400,7 +400,7 @@ public final class RouterStage implements PipelineStage {
         return next.proceed(statement.withRouting(workloadClass, targetBackend));
     }
 
-    private String resolveBackend(Statement statement) {
+    private String resolveBackend(Statement statement) throws SQLException {
         for (SchemaRule rule : schemaRules) {
             if (rule.schemaPattern().matcher(statement.sqlText()).find()) {
                 log.debug("router: schema rule matched -> backend={}", rule.backendName());
@@ -463,6 +463,30 @@ public final class RouterStage implements PipelineStage {
         for (TableShardRule rule : tableShardRules) {
             if (!rule.tablePattern().matcher(statement.sqlText()).find()) {
                 continue;
+            }
+            // An INSERT carries its shard key in the VALUES list, not in a predicate, so the predicate matcher below never sees it and the
+            // statement used to fall through to the default backend: the row landed on a node that is not (or not only) a shard and no
+            // keyed read ever found it again. Route it by its key, or refuse it with the reason.
+            InsertShardKey.Result insert = InsertShardKey.analyze(statement.sqlText(), rule.tableName(), rule.column(), statement.bindParams());
+            if (insert instanceof InsertShardKey.Routed routed) {
+                java.util.Set<String> owners = new java.util.LinkedHashSet<>();
+                for (String key : routed.keyValues()) {
+                    String owner = rule.strategy().resolve(key);
+                    if (owner == null) {
+                        throw ErrorCatalog.sqlException("ERR_SHARD_INSERT_UNROUTABLE", rule.tableName(), rule.column(),
+                                "no shard owns the value " + key);
+                    }
+                    owners.add(owner);
+                }
+                if (owners.size() == 1) {
+                    String owner = owners.iterator().next();
+                    log.debug("router: INSERT into sharded table {} ({}) routed to {}", rule.tableName(), rule.column(), owner);
+                    return owner;
+                }
+                throw ErrorCatalog.sqlException("ERR_SHARD_INSERT_SPANS_SHARDS", rule.tableName(), owners.size(), String.join(", ", owners));
+            }
+            if (insert instanceof InsertShardKey.Unroutable unroutable) {
+                throw ErrorCatalog.sqlException("ERR_SHARD_INSERT_UNROUTABLE", rule.tableName(), rule.column(), unroutable.reason());
             }
             String literal = ValueShardLiteralMatcher.findLiteralValue(statement.sqlText(), rule.column());
             // Real prepared-statement traffic (JDBC PreparedStatement, psycopg2 parameterized
