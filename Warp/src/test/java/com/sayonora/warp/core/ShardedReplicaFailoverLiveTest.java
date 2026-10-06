@@ -121,6 +121,18 @@ class ShardedReplicaFailoverLiveTest {
         }
     }
 
+    private static long sumAmount(Node n) throws Exception {
+        return sumWhere(n, "1 = 1");
+    }
+
+    private static long sumWhere(Node n, String where) throws Exception {
+        try (Connection c = n.conn(); Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery("select count(*), coalesce(sum(amount), 0) from orders where " + where)) {
+            rs.next();
+            return where.equals("1 = 1") ? rs.getLong(2) : rs.getLong(1);
+        }
+    }
+
     private static Set<Long> ids(Node n) throws Exception {
         Set<Long> out = new HashSet<>();
         try (Connection c = n.conn(); Statement st = c.createStatement(); ResultSet rs = st.executeQuery("select id from orders")) {
@@ -251,6 +263,31 @@ class ShardedReplicaFailoverLiveTest {
             assertTrue(count(p1) > 10 && count(p2) > 10, "both shards got rows: " + count(p1) + " / " + count(p2));
             assertEquals(100, count(p1) + count(p2));
 
+            // 1b. UPDATE / DELETE: keyed ones go to one shard, the rest to every shard, with exact row counts
+            try (Connection c = DriverManager.getConnection(url, "warp", "secret"); Statement st = c.createStatement()) {
+                assertEquals(1, st.executeUpdate("update orders set amount = 99999 where customer_id = 7"), "a keyed update touches the one row");
+                assertEquals(1, sumWhere(p1, "amount = 99999") + sumWhere(p2, "amount = 99999"), "...on exactly one shard");
+                assertEquals(1, st.executeUpdate("update orders set amount = 70 where customer_id = 7"));
+                assertEquals(100, st.executeUpdate("update orders set amount = amount + 1"), "an unkeyed update runs on every shard and the counts add up");
+                assertEquals(50600, sumAmount(p1) + sumAmount(p2), "both shards were updated");
+                assertEquals(100, st.executeUpdate("update orders set amount = amount - 1"));
+                assertEquals(10, st.executeUpdate("delete from orders where id > 90"), "an unkeyed delete runs on every shard");
+                for (long id = 91; id <= 100; id++) {
+                    acked.remove(id);
+                }
+                assertEquals(90, count(p1) + count(p2));
+                var refused = org.junit.jupiter.api.Assertions.assertThrows(java.sql.SQLException.class,
+                        () -> st.executeUpdate("update orders set customer_id = 5 where id = 1"));
+                assertTrue(refused.getMessage().contains("cannot UPDATE the shard key"), refused.getMessage());
+            }
+            try (Connection c = DriverManager.getConnection(url, "warp", "secret"); Statement st = c.createStatement()) {
+                c.setAutoCommit(false);
+                var refused = org.junit.jupiter.api.Assertions.assertThrows(java.sql.SQLException.class,
+                        () -> st.executeUpdate("delete from orders where amount = -1"));
+                System.out.println("SHARDED-NOTE " + engine + " broadcast inside a transaction: " + refused.getMessage().replaceAll("\\s+", " "));
+                c.rollback();
+            }
+
             // 2. reads, including a scatter-gather aggregate, are served by the shard replicas
             Thread.sleep(5000); // replicas sampled, read-after-write window passed
             long before = routedReads(warp, r1, r2);
@@ -258,7 +295,7 @@ class ShardedReplicaFailoverLiveTest {
                 for (int i = 0; i < 6; i++) {
                     try (ResultSet rs = st.executeQuery("select sum(amount) from orders")) {
                         rs.next();
-                        assertEquals(50500, rs.getLong(1), "scatter-gather SUM across both shards");
+                        assertEquals(40950, rs.getLong(1), "scatter-gather SUM across both shards (rows 1..90)");
                     }
                 }
             }
@@ -317,6 +354,14 @@ class ShardedReplicaFailoverLiveTest {
                     ResultSet rs = st.executeQuery("select count(*) from orders")) {
                 rs.next();
                 assertEquals(rows, rs.getLong(1), "count through Warp equals what the shards hold");
+            }
+            // 6. a broadcast write that fails on one shard after another applied it says so (shard 2 has no usable primary left now)
+            r2.crash();
+            try (Connection c = DriverManager.getConnection(url, "warp", "secret"); Statement st = c.createStatement()) {
+                var partial = org.junit.jupiter.api.Assertions.assertThrows(java.sql.SQLException.class,
+                        () -> st.executeUpdate("update orders set amount = amount"));
+                System.out.println("SHARDED-NOTE " + engine + " partial broadcast failure: " + partial.getMessage().replaceAll("\\s+", " "));
+                assertTrue(partial.getMessage().contains("had already applied this statement when shard \"s2\" failed"), partial.getMessage());
             }
         }
     }

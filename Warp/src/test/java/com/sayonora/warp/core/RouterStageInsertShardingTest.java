@@ -86,4 +86,25 @@ class RouterStageInsertShardingTest {
         assertEquals("default", routed(SourceDialect.POSTGRES, "INSERT INTO orders_archive (customer_id) VALUES (1)"));
         assertEquals("default", routed(SourceDialect.POSTGRES, "UPDATE items SET name = 'y'"));
     }
+
+    @Test
+    void anUpdateOrDeleteWithTheKeyGoesToTheOwningShardAndWithoutItToEveryShard() throws SQLException {
+        for (int customer = 1; customer <= 20; customer++) {
+            String owner = routed(SourceDialect.POSTGRES, "SELECT * FROM orders WHERE customer_id = " + customer);
+            assertEquals(owner, routed(SourceDialect.POSTGRES, "UPDATE orders SET amount = 1 WHERE customer_id = " + customer));
+            assertEquals(owner, routed(SourceDialect.POSTGRES, "DELETE FROM orders WHERE id = 5 AND customer_id = " + customer));
+            assertEquals(owner, routed(SourceDialect.MYSQL, "DELETE FROM `orders` WHERE `customer_id` = ?", customer));
+            assertEquals(owner, routed(SourceDialect.SQL_SERVER, "UPDATE [orders] SET [amount] = ? WHERE [customer_id] = ?", 5, customer));
+        }
+        for (String sql : new String[] {"UPDATE orders SET amount = 0", "DELETE FROM orders", "DELETE FROM orders WHERE amount = 0",
+                "DELETE FROM orders WHERE customer_id = 3 OR id = 9", "UPDATE orders SET amount = 0 WHERE customer_id > 4"}) {
+            assertEquals(RoutingBackendExecutor.SCATTER_ALL, routed(SourceDialect.POSTGRES, sql), sql);
+        }
+    }
+
+    @Test
+    void assigningTheShardKeyIsRefused() {
+        SQLException e = assertThrows(SQLException.class, () -> routed(SourceDialect.POSTGRES, "UPDATE orders SET customer_id = 9 WHERE id = 1"));
+        assertTrue(e.getMessage().contains("cannot UPDATE the shard key"), e.getMessage());
+    }
 }

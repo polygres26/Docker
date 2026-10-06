@@ -437,12 +437,18 @@ qualifier needed anywhere), and the router picks the real fastest path per state
   resolve with certainty is **refused with the reason** (`ERR_SHARD_INSERT_UNROUTABLE`) instead of guessed: no column list, `INSERT ... SELECT`,
   `DEFAULT VALUES`, a shard key that is `NULL`, `DEFAULT`, an expression or a named bind, or no bind value. A multi-row insert whose rows belong to
   different shards is refused too (`ERR_SHARD_INSERT_SPANS_SHARDS`): split it per shard (Warp does not split it, because the parts would not be
-  atomic). `UPDATE` and `DELETE` on a sharded table are routed only when they carry a `column = value` predicate on the key; without one they are
-  still sent to the default backend, which is a known gap, not a design.
+  atomic). **`UPDATE` and `DELETE`** (`WriteShardKey`) are analysed the same careful way, and more strictly than the text match a `SELECT` uses: a
+  `WHERE` that is a plain conjunction containing `key = value` (literal or `?`, `$n`, `:n` bind) goes to the one shard that owns it; anything that cannot be
+  proven to touch one shard (no `WHERE`, no key predicate, a range or `IN`, the key only under an `OR` or inside a subquery) runs on **every shard of that
+  table, on each shard's primary**, and the affected-row counts are added up. Not atomic: the shards are separate databases, so a broadcast write is
+  refused inside a transaction (`ERR_SHARD_WRITE_IN_TRANSACTION`), and if a shard fails after others applied it the error says how many already did and
+  which shard failed (`ERR_SHARD_WRITE_PARTIAL`); nothing is rolled back. An `UPDATE` that assigns the shard key is refused
+  (`ERR_SHARD_KEY_UPDATE`) because the row would have to move to another shard: delete it and insert it again. Before this, an unkeyed write went to the
+  default backend, and `UPDATE t SET key = 9 WHERE id = 1` was routed by the new value 9.
 - **Shards and replicas.** Each shard is an ordinary backend, so it can have its own replicas and its own failover mode: a keyed read, and each
   member of a scatter-gather read, can be served by that shard's replica, and a shard whose primary fails over does so on its own while the other
   shards keep serving. Live-verified on Postgres and on MySQL (`ShardedReplicaFailoverLiveTest`): two hash shards each with a replica in `promote`
-  mode, 100 rows inserted and read back by key, a scatter-gather `SUM` served by the replicas, one shard's primary killed under write load and
+  mode, 100 rows inserted and read back by key, keyed and unkeyed updates and deletes with exact row counts, a scatter-gather `SUM` served by the replicas, one shard's primary killed under write load and
   its replica promoted, a planned switchover of the other shard under the same load, and every acknowledged write present afterwards, none twice.
   Not live-verified: SQL Server and Oracle shards with replicas (the router logic is dialect-neutral and unit-tested with all four dialects'
   syntax, but a SQL Server availability group and Oracle Data Guard were not run as shards here).

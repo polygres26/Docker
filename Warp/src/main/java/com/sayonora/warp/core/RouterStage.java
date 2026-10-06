@@ -488,6 +488,20 @@ public final class RouterStage implements PipelineStage {
             if (insert instanceof InsertShardKey.Unroutable unroutable) {
                 throw ErrorCatalog.sqlException("ERR_SHARD_INSERT_UNROUTABLE", rule.tableName(), rule.column(), unroutable.reason());
             }
+            // UPDATE / DELETE: a plain conjunction with key = value goes to the one shard that owns it; anything that cannot be proven to
+            // touch one shard runs on all of them (RoutingBackendExecutor#executeScatterGather); assigning the key itself is refused.
+            WriteShardKey.Result write = WriteShardKey.analyze(statement.sqlText(), rule.tableName(), rule.column(), statement.bindParams());
+            if (write instanceof WriteShardKey.Keyed keyed) {
+                String owner = rule.strategy().resolve(keyed.keyValue());
+                return owner != null ? owner : RoutingBackendExecutor.SCATTER_ALL;
+            }
+            if (write instanceof WriteShardKey.Broadcast) {
+                log.debug("router: write to sharded table {} without a usable {} predicate -> every shard", rule.tableName(), rule.column());
+                return RoutingBackendExecutor.SCATTER_ALL;
+            }
+            if (write instanceof WriteShardKey.KeyChange change) {
+                throw ErrorCatalog.sqlException("ERR_SHARD_KEY_UPDATE", rule.tableName(), change.column());
+            }
             String literal = ValueShardLiteralMatcher.findLiteralValue(statement.sqlText(), rule.column());
             // Real prepared-statement traffic (JDBC PreparedStatement, psycopg2 parameterized
             // queries, any ORM) sends the shard key as a bind parameter, not a literal -- see
