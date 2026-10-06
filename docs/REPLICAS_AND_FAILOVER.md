@@ -393,11 +393,27 @@ indefinitely by the code). The config listener now compares the stored version w
 every `WARP_CONFIG_POLL_SECONDS` (default 30, `0` turns the poll off), and applies a newer one (log line `found version N newer than the
 applied M ...`). Both paths are covered by live tests, which suppress the notification entirely for the poll case. The window in which a
 stale instance can still write to the old primary is therefore bounded by that interval, and the old primary is frozen by the instances that
-did learn of the change; this is not a per-write term check.
+did learn of the change. For a tighter bound turn on the write fence below.
+
+**Write fence (`WARP_WRITE_FENCE=true`, off by default).** Every config change, a switchover included, is a new increasing `warp_config`
+version; that version is the term. With the fence on, an instance reads the newest stored version every `WARP_WRITE_FENCE_REFRESH_MILLIS`
+(default 500) and applies it at once when it is behind, and each write checks two things before it runs: the newest version seen must be the
+one this instance has applied (one inline catch-up is tried first, otherwise the write is refused with `ERR_WRITE_FENCE_BEHIND`), and the last
+successful look at the config database must be younger than `WARP_WRITE_FENCE_MAX_STALENESS_MILLIS` (default 5000), otherwise the write is
+refused with `ERR_WRITE_FENCE_UNCONFIRMED`. The window for a stale write is therefore about the refresh interval while the config database is
+reachable and at most the staleness limit when it is not (the partitioned-instance case), instead of the config poll interval. Live
+(Postgres, two instances, notification suppressed and poll off): the fenced instance followed the switchover within the test's 5 s bound; the
+same instance without the fence was still on the old primary after 8 s. The unreachable-config-database refusal is covered by unit tests only.
+Trade-offs: it is fail-closed, so writes depend on the config database being reachable (a longer outage than the staleness limit stops writes
+on every fenced instance, on every engine); it costs one in-memory check per write plus one small read per refresh; it applies to any write
+once any backend in the process has replicas, not only to writes for the replicated backend; reads are not fenced. The term is held in the
+instance, not on the database node, so a client that bypasses Warp is not fenced, and the check is a bound on the window, not a guarantee of
+zero stale writes (a write can pass the check just before a switchover lands). It is engine independent and has not been run against MySQL,
+SQL Server or Oracle backends.
 
 What the guards do **not** cover: a partition that also cuts the replica off from the primary while clients can still reach the primary (the
 replica then hears nothing, so only the fence command helps, or the majority of Warp instances); two Warp instances with stale
-configuration writing to different nodes (the lease controls who decides, not who writes); and the config database being a single point (Warp
+configuration writing to different nodes inside the fence's window (the lease controls who decides, not who writes); and the config database being a single point (Warp
 fails safe and does not promote without it). Without external fencing the majority rule remains the only protection against promoting while the
 old primary is partitioned away from Warp but serving others. Configure `WARP_FAILOVER_FENCE_COMMAND` if that can happen in your network.
 

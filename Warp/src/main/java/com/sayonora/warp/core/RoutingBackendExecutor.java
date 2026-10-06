@@ -194,6 +194,10 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         // path free of regex work.
         if (!registry.allReplicaSpecs().isEmpty() && !StatementClassifier.isReplicaSafeRead(statement.sqlText())) {
             lastNonReadMillis = System.currentTimeMillis();
+            WriteFence fence = registry.writeFence();
+            if (fence != null) {
+                fence.check();
+            }
         }
         String targetName = statement.targetBackend();
         if (targetName == null && transactionConnections != null) {
