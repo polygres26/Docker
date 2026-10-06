@@ -56,6 +56,8 @@ public final class Main {
     public static void main(String[] args) throws Exception {
         ServerOptions options = ServerOptions.parse(args);
 
+        // a malformed encryption key, or a missing one under WARP_REQUIRE_ENCRYPTION_KEY=true, stops Warp here, before it writes a secret
+        com.sayonora.warp.secrets.FieldCipher.validateAtStartup();
         ConfigStore configStore = new ConfigStore(options);
         configStore.ensureSchema();
         com.sayonora.warp.config.NodeRegistry.ensureSchema(options);

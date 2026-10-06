@@ -831,6 +831,42 @@ public final class MetricsServer {
                     baseRequest.setHandled(true);
                     return;
                 }
+                if (configStore != null && ("/api/security/encryption".equals(target) || "/api/security/encryption/rotate".equals(target))) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    response.setContentType("application/json; charset=utf-8");
+                    try {
+                        if ("/api/security/encryption".equals(target) && "GET".equals(request.getMethod())) {
+                            response.setStatus(HttpServletResponse.SC_OK);
+                            response.getWriter().write(com.sayonora.warp.config.SecretsRotation.status(configStore, xaRecoveryLog, options).toString());
+                        } else if ("/api/security/encryption/rotate".equals(target) && "POST".equals(request.getMethod())) {
+                            response.setStatus(HttpServletResponse.SC_OK);
+                            response.getWriter().write(com.sayonora.warp.config.SecretsRotation.rotate(configStore, xaRecoveryLog, options).toString());
+                        } else {
+                            response.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
+                            response.getWriter().write("{\"error\":\"use GET /api/security/encryption or POST /api/security/encryption/rotate\"}");
+                        }
+                    } catch (IllegalStateException e) {
+                        response.setStatus(HttpServletResponse.SC_CONFLICT);
+                        JsonObject err = new JsonObject();
+                        err.addProperty("error", String.valueOf(e.getMessage()));
+                        response.getWriter().write(err.toString());
+                    } catch (java.sql.SQLException e) {
+                        response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+                        JsonObject err = new JsonObject();
+                        err.addProperty("error", "control-plane database error: " + e.getMessage());
+                        response.getWriter().write(err.toString());
+                    }
+                    baseRequest.setHandled(true);
+                    return;
+                }
                 if (backendRegistry != null && backendRegistry.failoverMonitor() != null
                         && target.startsWith("/api/failover")) {
                     if (!authorized(request.getMethod(), role)) {

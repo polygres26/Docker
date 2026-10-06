@@ -105,19 +105,47 @@ themselves; the stage does not do this for them.
 ### 1.8 Backend credential storage — `FieldCipher`
 
 [`secrets/FieldCipher.java`](../Warp/src/main/java/com/sayonora/warp/secrets/FieldCipher.java) —
-AES-256-GCM, key from `SAYONORA_ENCRYPTION_KEY` (base64, must decode to exactly 32 bytes). Applied
-to exactly 3 `WarpConfig` fields: `backends` (embeds a password inline), `awsIamCredentials`, and
-`llmApiKey` — confirmed in [`config/ConfigStore.java:71-101`](../Warp/src/main/java/com/sayonora/warp/config/ConfigStore.java).
+AES-256-GCM per value, never as a whole-blob wrapper (so `warp_config.payload` stays a real jsonb document).
 
-**Disclosed gaps, both real:**
-- If `SAYONORA_ENCRYPTION_KEY` is unset, `encrypt()` returns the value **unchanged** (plaintext)
-  and logs a one-time warning naming exactly this. Backward-compatible by design, but an operator
-  who never sets the key is silently storing secrets in plaintext in `warp_config`.
-- **No key rotation mechanism exists.** `decrypt()` uses a single static env-sourced key with no
-  versioning beyond the `encv1:` prefix itself, no rotation API, no multi-key support. Rotating
-  `SAYONORA_ENCRYPTION_KEY` today would make every previously-encrypted field unreadable; there is
-  no re-encrypt-in-place tooling. This is a genuine gap, not previously documented anywhere in the
-  codebase.
+**What is encrypted, where:**
+
+| Stored in | Secret |
+|---|---|
+| `warp_config` (every version) | `backends` (the whole spec: each backend's and replica's password), `awsIamCredentials`, `llmApiKey` ([`config/ConfigStore.java`](../Warp/src/main/java/com/sayonora/warp/config/ConfigStore.java)) |
+| `warp_config.mcpUpstreams` (JSON inside the config) | each upstream's `bearerToken`, `clientSecret`, `accessToken`, `refreshToken` |
+| `warp_xa_log.backend_password` | the password of an in-doubt XA branch's backend |
+| `warp_acme_state.value` | the ACME account and certificate state |
+
+(Earlier revisions of this document said "exactly 3 fields"; the MCP upstream, XA log and ACME values are encrypted with the same cipher.)
+Backend passwords can also be `vault:` / `cyberark:` references, in which case the config holds the reference and not the secret.
+
+**Keys and format.** `SAYONORA_ENCRYPTION_KEY` is the active key (base64, 32 raw bytes: `openssl rand -base64 32`) and the only one ever used to
+encrypt. Each key has an id (the first 4 bytes of its SHA-256, hex; not secret). A stored value is `encv2:<keyId>:<base64(iv||ciphertext)>`, so it names
+the key it needs. The older `encv1:<base64>` (no key id) is still read, by trying the active key and then the previous ones; plaintext passes through
+`decrypt()` unchanged.
+
+**Fail closed (opt-in).** By default an unset key stores the value in **plaintext** with one logged warning, which keeps existing deployments working.
+`WARP_REQUIRE_ENCRYPTION_KEY=true` turns that into an error: Warp refuses to start without a valid key and never writes a secret in the clear. A malformed
+key (not base64, not 32 bytes) is refused at startup either way.
+
+**Rotation.** `SAYONORA_ENCRYPTION_KEY_PREVIOUS` is a comma-separated list of older keys, used to decrypt only.
+1. Start Warp with the new key as `SAYONORA_ENCRYPTION_KEY` and the old one in `SAYONORA_ENCRYPTION_KEY_PREVIOUS`.
+2. `GET /api/security/encryption` (any admin role) shows the active key id, the previous key ids and, per stored secret, which key protects it
+   (`needsRotation` is true while anything is under another key, in `encv1`, or in plaintext).
+3. `POST /api/security/encryption/rotate` (admin role) re-encrypts everything under the active key: a new `warp_config` version for the three config
+   fields and the MCP upstream tokens, the XA log passwords and the ACME state. It is idempotent, and a second call changes nothing. It also encrypts values
+   that were stored in plaintext before a key existed.
+4. When the status shows nothing under the old key, remove it from `SAYONORA_ENCRYPTION_KEY_PREVIOUS`.
+
+Starting with a key that does not open a stored value fails at startup and names the missing key id ("encrypted with key d370c30d, which is not configured:
+set it as SAYONORA_ENCRYPTION_KEY or list it in SAYONORA_ENCRYPTION_KEY_PREVIOUS"). **Older `warp_config` versions are immutable history** and keep the key
+they were written with, so the old key is still needed to read them (for example to roll back to one); keep it in `..._PREVIOUS` for as long as you keep those
+versions. Verified live (`SecretsRotationLiveTest`): key A, then B active with A previous, rotate, then B alone starts; A alone is refused with the message
+above; `WARP_REQUIRE_ENCRYPTION_KEY=true` without a key is refused.
+
+**Still true:** the key lives in the process environment, so anyone who can read the environment of a running Warp or the secrets store that feeds it has
+it; there is no HSM/KMS integration; the failover rejoin command (`WARP_FAILOVER_REJOIN_COMMAND`) is given the current primary's password in its environment
+(`PGPASSWORD`), because the rebuild tools need it; and rotation does not rewrite old config versions.
 
 ### 1.9 Cluster and peer trust — three independent TLS domains
 
@@ -152,7 +180,7 @@ gap for a project claiming enterprise readiness and is the first concrete item i
 | Admin API (`MetricsServer`) | **Locked out** if `WARP_ADMIN_TOKEN`/OAuth unset | Fail-closed |
 | `AccessControlStage` (row/column) | No-op if no policy configured; **fail-closed** once a policy exists and an attribute is missing | Fail-closed |
 | `FirewallStage` | **Allow** if no rule matches | Fail-open by design; opt-in deny rules only |
-| `FieldCipher` (secrets at rest) | **Plaintext** if `SAYONORA_ENCRYPTION_KEY` unset | Fail-open, with a logged warning |
+| `FieldCipher` (secrets at rest) | **Plaintext** if `SAYONORA_ENCRYPTION_KEY` unset | Fail-open by default, with a logged warning; `WARP_REQUIRE_ENCRYPTION_KEY=true` makes it fail-closed |
 
 The operational takeaway: Warp's identity/authorization layers default toward being explicitly
 turned on by an operator, and the admin API and row/column policy engine fail closed once

@@ -120,6 +120,46 @@ public final class XaRecoveryLog {
         }
     }
 
+    /** How the stored backend passwords are protected: label ({@code plaintext}, {@code encv1}, a key id) to row count. */
+    public Map<String, Integer> passwordProtection() throws SQLException {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        try (Connection conn = com.sayonora.warp.pgwire.PgConnections.open(options); Statement st = conn.createStatement();
+                ResultSet rs = st.executeQuery("SELECT backend_password FROM warp_xa_log WHERE backend_password IS NOT NULL")) {
+            while (rs.next()) {
+                counts.merge(com.sayonora.warp.secrets.FieldCipher.protection(rs.getString(1)), 1, Integer::sum);
+            }
+        }
+        return counts;
+    }
+
+    /** Re-encrypts every stored backend password under the active key; returns how many rows changed. */
+    public int reencryptPasswords() throws SQLException {
+        int changed = 0;
+        try (Connection conn = com.sayonora.warp.pgwire.PgConnections.open(options); Statement st = conn.createStatement();
+                ResultSet rs = st.executeQuery("SELECT gtrid_hex, branch_index, backend_password FROM warp_xa_log "
+                        + "WHERE backend_password IS NOT NULL");
+                java.sql.PreparedStatement update = conn.prepareStatement(
+                        "UPDATE warp_xa_log SET backend_password = ? WHERE gtrid_hex = ? AND branch_index = ?")) {
+            // the cursor is fully read before the first update, so the result set and the updates do not interfere
+            java.util.List<Object[]> rows = new ArrayList<>();
+            while (rs.next()) {
+                rows.add(new Object[] {rs.getString(1), rs.getInt(2), rs.getString(3)});
+            }
+            for (Object[] r : rows) {
+                String stored = (String) r[2];
+                String fresh = com.sayonora.warp.secrets.FieldCipher.reencrypt(stored);
+                if (!fresh.equals(stored)) {
+                    update.setString(1, fresh);
+                    update.setString(2, (String) r[0]);
+                    update.setInt(3, (Integer) r[1]);
+                    update.executeUpdate();
+                    changed++;
+                }
+            }
+        }
+        return changed;
+    }
+
     /** Every branch still awaiting resolution, grouped by transaction -- what startup recovery
      * (all committed, by construction: see {@link #logDecided}) needs to finish applying. */
     public Map<String, List<Branch>> findUnresolved() throws SQLException {
