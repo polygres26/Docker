@@ -40,6 +40,53 @@ public final class AcmeDb {
         }
     }
 
+    /** How the stored ACME state is protected: label ({@code plaintext}, {@code encv1}, a key id) to row count; empty if there is none. */
+    public static java.util.Map<String, Integer> protection(ServerOptions options) throws SQLException {
+        java.util.Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+        try (Connection c = PgConnections.open(options); Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery("SELECT value FROM warp_acme_state")) {
+            while (rs.next()) {
+                counts.merge(FieldCipher.protection(rs.getString(1)), 1, Integer::sum);
+            }
+        } catch (SQLException e) {
+            if ("42P01".equals(e.getSQLState())) { // ACME was never used: no table
+                return counts;
+            }
+            throw e;
+        }
+        return counts;
+    }
+
+    /** Re-encrypts every stored value under the active key; returns how many rows changed (0 when ACME was never used). */
+    public static int reencryptAll(ServerOptions options) throws SQLException {
+        int changed = 0;
+        try (Connection c = PgConnections.open(options)) {
+            java.util.List<String[]> rows = new java.util.ArrayList<>();
+            try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery("SELECT name, value FROM warp_acme_state")) {
+                while (rs.next()) {
+                    rows.add(new String[] {rs.getString(1), rs.getString(2)});
+                }
+            } catch (SQLException e) {
+                if ("42P01".equals(e.getSQLState())) {
+                    return 0;
+                }
+                throw e;
+            }
+            try (PreparedStatement ps = c.prepareStatement("UPDATE warp_acme_state SET value = ?, updated_at = now() WHERE name = ?")) {
+                for (String[] r : rows) {
+                    String fresh = FieldCipher.reencrypt(r[1]);
+                    if (!fresh.equals(r[1])) {
+                        ps.setString(1, fresh);
+                        ps.setString(2, r[0]);
+                        ps.executeUpdate();
+                        changed++;
+                    }
+                }
+            }
+        }
+        return changed;
+    }
+
     public void put(String name, String plaintext) throws SQLException {
         try (Connection c = PgConnections.open(options); PreparedStatement ps = c.prepareStatement(
                 "INSERT INTO warp_acme_state(name, value, updated_at) VALUES (?, ?, now()) "

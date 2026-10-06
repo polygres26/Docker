@@ -64,6 +64,15 @@ public final class ConfigStore implements AutoCloseable {
     }
 
     public Optional<Version> readLatest() throws SQLException {
+        return readLatest(true);
+    }
+
+    /** The latest version exactly as stored: secret fields still encrypted. For the secrets status and rotation only. */
+    public Optional<Version> readLatestRaw() throws SQLException {
+        return readLatest(false);
+    }
+
+    private Optional<Version> readLatest(boolean decrypt) throws SQLException {
         try (Connection conn = com.sayonora.warp.pgwire.PgConnections.open(options); Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery(
                         "SELECT version, payload::text, created_at FROM warp_config "
@@ -72,10 +81,55 @@ public final class ConfigStore implements AutoCloseable {
                 return Optional.empty();
             }
             long version = rs.getLong(1);
-            WarpConfig payload = decryptSecretFields(WarpConfig.fromJson(rs.getString(2)));
+            WarpConfig stored = WarpConfig.fromJson(rs.getString(2));
+            WarpConfig payload = decrypt ? decryptSecretFields(stored) : stored;
             java.time.Instant createdAt = rs.getTimestamp(3).toInstant();
             return Optional.of(new Version(version, payload, createdAt));
         }
+    }
+
+    /**
+     * How the secrets of the latest stored config are protected: for each secret-bearing field, {@code plaintext}, {@code encv1} or the
+     * id of the key it is encrypted with; the MCP upstream tokens inside {@code mcpUpstreams} are counted per label.
+     */
+    public java.util.Map<String, Object> secretProtection() throws SQLException {
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        WarpConfig raw = readLatestRaw().map(Version::payload).orElse(null);
+        if (raw == null) {
+            return out;
+        }
+        out.put("backends", com.sayonora.warp.secrets.FieldCipher.protection(raw.backends()));
+        out.put("awsIamCredentials", com.sayonora.warp.secrets.FieldCipher.protection(raw.awsIamCredentials()));
+        out.put("llmApiKey", com.sayonora.warp.secrets.FieldCipher.protection(raw.llmApiKey()));
+        out.put("mcpUpstreamSecrets", SecretsJson.protectionCounts(raw.mcpUpstreams()));
+        return out;
+    }
+
+    /**
+     * Writes a new config version with every secret re-encrypted under the active key, when any of them is stored under another key or
+     * in plaintext; returns that version, or empty when everything is already current. Earlier versions are immutable history and keep the
+     * key they were written with.
+     */
+    public java.util.OptionalLong reencryptLatest() throws SQLException {
+        if (!com.sayonora.warp.secrets.FieldCipher.enabled()) {
+            throw new IllegalStateException("SAYONORA_ENCRYPTION_KEY is not set: there is no key to encrypt with");
+        }
+        Version raw = readLatestRaw().orElse(null);
+        if (raw == null) {
+            return java.util.OptionalLong.empty();
+        }
+        WarpConfig c = raw.payload();
+        boolean current = com.sayonora.warp.secrets.FieldCipher.isCurrent(c.backends())
+                && com.sayonora.warp.secrets.FieldCipher.isCurrent(c.awsIamCredentials())
+                && com.sayonora.warp.secrets.FieldCipher.isCurrent(c.llmApiKey())
+                && SecretsJson.allCurrent(c.mcpUpstreams());
+        if (current) {
+            return java.util.OptionalLong.empty();
+        }
+        // decrypt the three top-level fields with whichever key opens them; write() encrypts them under the active key
+        WarpConfig plain = decryptSecretFields(c).withMcpUpstreams(
+                SecretsJson.mapEncrypted(c.mcpUpstreams(), com.sayonora.warp.secrets.FieldCipher::reencrypt));
+        return java.util.OptionalLong.of(write(plain));
     }
 
     // Only these three fields ever carry a credential -- backends' "name=url|user|password" spec

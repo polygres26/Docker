@@ -154,7 +154,7 @@ public final class AbRoutingApi {
     }
 
     static boolean encryptionAvailable() {
-        return FieldCipher.encrypt("probe").startsWith("encv1:");
+        return FieldCipher.enabled();
     }
 
     private static void putPolicy(AbRouting rt, String store, JsonObject in, HttpServletResponse response) throws IOException, SQLException {
