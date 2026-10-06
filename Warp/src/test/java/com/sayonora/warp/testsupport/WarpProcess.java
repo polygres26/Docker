@@ -100,6 +100,9 @@ public final class WarpProcess implements AutoCloseable {
             // not a test client's rapid connection-setup handshake.
             env.put("WARP_QOS_RATE_PER_SEC", "1000");
             env.put("WARP_QOS_BURST", "1000");
+            // Never the fixed default gRPC port (7070): another process on the machine may hold it, and a test that wants a specific one
+            // sets WARP_GRPC_PORT itself afterwards.
+            env.put("WARP_GRPC_PORT", String.valueOf(findFreePort()));
             return this;
         }
 

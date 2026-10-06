@@ -231,7 +231,7 @@ final class Schema {
                                     + "with that name.");
                 }
                 try (Statement st = x.conn.createStatement()) {
-                    st.execute("DROP INDEX IF EXISTS " + r.pgIndex());
+                    com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "boltwire_drop_index", java.util.Map.of("index", r.pgIndex()));
                 }
                 try (PreparedStatement ps = x.conn.prepareStatement("DELETE FROM warp_graph_schema WHERE name = ?")) {
                     ps.setString(1, sc.name());

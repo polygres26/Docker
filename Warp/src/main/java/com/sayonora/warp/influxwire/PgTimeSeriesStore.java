@@ -206,15 +206,7 @@ public final class PgTimeSeriesStore implements InfluxBackend {
             }
             BackendTarget t = defaultTarget();
             requirePostgres(t);
-            String[] ddl = {
-                "CREATE TABLE IF NOT EXISTS _warp_influx_dbs (name TEXT PRIMARY KEY)",
-                "CREATE TABLE IF NOT EXISTS _warp_influx_rps (db TEXT NOT NULL, name TEXT NOT NULL, duration BIGINT NOT NULL, "
-                        + "shard_duration BIGINT NOT NULL, replication INT NOT NULL, is_default BOOLEAN NOT NULL, PRIMARY KEY (db, name))",
-                "CREATE TABLE IF NOT EXISTS _warp_influx_meas (db TEXT NOT NULL, rp TEXT NOT NULL, meas TEXT NOT NULL, PRIMARY KEY (db, rp, meas))",
-                "CREATE TABLE IF NOT EXISTS _warp_influx_fields (db TEXT NOT NULL, rp TEXT NOT NULL, meas TEXT NOT NULL, key TEXT NOT NULL, "
-                        + "type TEXT NOT NULL, PRIMARY KEY (db, rp, meas, key))",
-                "CREATE TABLE IF NOT EXISTS _warp_influx_tagkeys (db TEXT NOT NULL, rp TEXT NOT NULL, meas TEXT NOT NULL, key TEXT NOT NULL, "
-                        + "PRIMARY KEY (db, rp, meas, key))"};
+            java.util.List<String> ddl = com.sayonora.warp.core.DdlTemplates.loadStatements("postgres", "influxwire_catalog", java.util.Map.of());
             try (Connection c = t.open(); Statement st = c.createStatement()) {
                 for (String d : ddl) {
                     try {
