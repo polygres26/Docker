@@ -355,24 +355,17 @@ final class PostgresDocumentStore {
 
     private void ensureSchemaObjects(Connection conn, String db) throws SQLException {
         try (var st = conn.createStatement()) {
-            st.execute("CREATE SCHEMA IF NOT EXISTS " + quoteIdent(db));
-            st.execute("CREATE TABLE IF NOT EXISTS " + qualified(db, CATALOG) + " (name text PRIMARY KEY, entry bytea NOT NULL)");
-            st.execute("CREATE TABLE IF NOT EXISTS " + qualified(db, UNIQUE_KEYS)
-                    + " (coll text NOT NULL, idx text NOT NULL, k text NOT NULL, id text NOT NULL, PRIMARY KEY (coll, idx, k))");
-            st.execute("CREATE INDEX IF NOT EXISTS " + quoteIdent("__warp_uk_id_" + Integer.toHexString(db.hashCode())) + " ON "
-                    + qualified(db, UNIQUE_KEYS) + " (coll, id)");
+            com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "mongowire_database", java.util.Map.of("schema", quoteIdent(db),
+                    "catalog", qualified(db, CATALOG), "unique_keys", qualified(db, UNIQUE_KEYS),
+                    "index", quoteIdent("__warp_uk_id_" + Integer.toHexString(db.hashCode()))));
         }
     }
 
     private void createTable(Connection conn, String db, String coll) throws SQLException {
         String t = qualified(db, coll);
         try (var st = conn.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS " + t
-                    + " (id text PRIMARY KEY, doc jsonb NOT NULL, bson bytea, seq bigint GENERATED ALWAYS AS IDENTITY)");
-            st.execute("ALTER TABLE " + t + " ADD COLUMN IF NOT EXISTS bson bytea");
-            st.execute("ALTER TABLE " + t + " ADD COLUMN IF NOT EXISTS seq bigint GENERATED ALWAYS AS IDENTITY");
-            st.execute("CREATE INDEX IF NOT EXISTS " + quoteIdent("wseq_" + Integer.toHexString((db + "." + coll).hashCode()))
-                    + " ON " + t + " (seq)");
+            com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "mongowire_collection", java.util.Map.of("table", t,
+                    "index", quoteIdent("wseq_" + Integer.toHexString((db + "." + coll).hashCode()))));
         }
     }
 
@@ -576,7 +569,7 @@ final class PostgresDocumentStore {
                     existed = true;
                 }
                 try (var st = conn.createStatement()) {
-                    st.execute("DROP TABLE IF EXISTS " + qualified(db, coll));
+                    com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "mongowire_drop_collection", java.util.Map.of("table", qualified(db, coll)));
                 }
                 try (PreparedStatement ps = conn.prepareStatement("DELETE FROM " + qualified(db, CATALOG) + " WHERE name = ?")) {
                     ps.setString(1, coll);
@@ -615,7 +608,7 @@ final class PostgresDocumentStore {
                     }
                 }
                 try (var st = conn.createStatement()) {
-                    st.execute("DROP SCHEMA IF EXISTS " + quoteIdent(db) + " CASCADE");
+                    com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "mongowire_drop_database", java.util.Map.of("schema", quoteIdent(db)));
                 }
             }
         }
@@ -633,11 +626,11 @@ final class PostgresDocumentStore {
                 conn.setAutoCommit(false);
                 try (var st = conn.createStatement()) {
                     if (dropTarget) {
-                        st.execute("DROP TABLE IF EXISTS " + qualified(db, to));
+                        com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "mongowire_drop_collection", java.util.Map.of("table", qualified(db, to)));
                         st.execute("DELETE FROM " + qualified(db, CATALOG) + " WHERE name = " + literal(to));
                         st.execute("DELETE FROM " + qualified(db, UNIQUE_KEYS) + " WHERE coll = " + literal(to));
                     }
-                    st.execute("ALTER TABLE " + qualified(db, from) + " RENAME TO " + quoteIdent(to));
+                    com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "mongowire_rename_collection", java.util.Map.of("from", qualified(db, from), "to", quoteIdent(to)));
                     st.execute("UPDATE " + qualified(db, CATALOG) + " SET name = " + literal(to) + " WHERE name = " + literal(from));
                     st.execute("UPDATE " + qualified(db, UNIQUE_KEYS) + " SET coll = " + literal(to) + " WHERE coll = " + literal(from));
                     createTable(conn, db, to);

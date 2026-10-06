@@ -570,11 +570,18 @@ observation tables, `warp_firewall_rules`, `warp_ab_routing`, `warp_translation_
 `ddl/postgres/warp_*.sql` (the control plane is Postgres by design: it runs on the default backend's connection and uses `LISTEN`/`NOTIFY`), loaded with
 `DdlTemplates.run`. The audit log and the legacy key/value store accept any JDBC URL, so they also have a MySQL file and use
 `DdlTemplates.runFor`; there is deliberately no Oracle or SQL Server file for them (the same statement means something else there, or does not parse),
-and `runFor` fails with a clear message instead of guessing. `NoInlineDdlTest` fails the build when a new main-code file puts `CREATE TABLE`,
-`CREATE INDEX`, a trigger, a function or `ALTER TABLE ... ADD` in a Java string; its short allow-list names what is still inline (the static schemas of
-`PgItemStore`, `PgTimeSeriesStore`, `PostgresDocumentStore` and `PostgresSearchStore`) and the code that builds DDL from a runtime name
-(`CacheTriggerInstaller`, rollup tables, CQL `DESCRIBE`, dialect translation). The move was checked by dumping every `warp_*` table, column, index,
-trigger, function and constraint from a fresh database on `main` and on this change: 120 facts, identical.
+and `runFor` fails with a clear message instead of guessing. `NoInlineDdlTest` fails the build when a main-code file puts `CREATE TABLE/INDEX/SCHEMA/
+SEQUENCE/FUNCTION/TRIGGER`, `DROP TABLE/INDEX/SCHEMA/SEQUENCE/TRIGGER` or `ALTER TABLE` in a Java string, and when code names a DDL file that does not exist.
+The stores follow it too, including the statements whose identifiers are only known at run time (a DynamoDB secondary index, a Mongo collection, an
+OpenSearch index table): those are files with `${placeholders}` for already generated or quoted identifiers (`dynamowire_gsi_index.sql`,
+`mongowire_collection.sql`, `oswire_index_tables.sql`, ...), as are the drops and the rename (`mongowire_drop_collection.sql`,
+`mongowire_rename_collection.sql`, `sqswire_drop_queue.sql`, which has one file per engine because Oracle before 23c has no `DROP TABLE IF EXISTS`).
+What is still allowed inline is code that assembles DDL from a runtime shape a template cannot express (`CacheTriggerInstaller`, rollup tables) or
+only matches or prints SQL text (CQL `DESCRIBE`, dialect translation, two orawire comments). Both moves were checked against `main`: the control-plane
+tables by dumping every `warp_*` table, column, index, trigger, function and constraint from a fresh database (120 facts, identical), and the stores
+by running DynamoDB create-table with a secondary index, TTL on and off, transact-write, delete-table, Mongo insert, unique index, rename, drop collection
+and drop database, a Cypher index create and drop, and an SQS queue create and delete through the real client libraries, dumping the Postgres schema
+after every step (856 lines, identical).
 
 **Only two of the four can even reach a non-default backend today.** `PgItemStore` (dynamowire)
 and `PgQueueStore` (sqswire) both support real shard routing (`WARP_SHARD_BACKENDS` — hashing

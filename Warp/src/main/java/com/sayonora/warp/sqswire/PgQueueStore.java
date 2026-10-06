@@ -686,22 +686,22 @@ public final class PgQueueStore {
         QueueAttributes attrs = findQueueFresh(queueName);
         String table = tableOf(queueName, attrs);
         try (Connection conn = connectionFor(queueName); var st = conn.createStatement()) {
-            // Real per-engine gap: Oracle (pre-23c) has no "DROP TABLE IF EXISTS" at all -- a
-            // plain DROP TABLE throws ORA-00942 for a table that's already gone (or was never
-            // created, e.g. DeleteQueue on a queue that never had a message sent to it), which
-            // this treats the same way IF EXISTS would on the other 3 engines: not an error.
-            if ("oracle".equals(engineOf(conn))) {
+            // The statements are per-engine files (ddl/<engine>/sqswire_drop_queue.sql). Oracle (pre-23c) has no "DROP TABLE IF EXISTS" at all:
+            // a plain DROP TABLE throws ORA-00942 for a table that is already gone (or was never created, e.g. DeleteQueue on a queue that never
+            // had a message sent to it), which is treated the same way IF EXISTS is on the other engines: not an error.
+            String engine = engineOf(conn);
+            List<String> drops = DdlTemplates.loadStatements(engine, "sqswire_drop_queue",
+                    java.util.Map.of("table", table, "dedup_table", dedupTable(table)));
+            if (drops == null) {
+                throw new SQLException("sqswire has no DeleteQueue DDL for engine \"" + engine + "\"");
+            }
+            for (String drop : drops) {
                 try {
-                    st.execute("DROP TABLE " + table);
+                    st.execute(drop);
                 } catch (SQLException e) {
-                    if (!"942".equals(e.getSQLState()) && e.getErrorCode() != 942) {
+                    if (!"oracle".equals(engine) || (!"942".equals(e.getSQLState()) && e.getErrorCode() != 942)) {
                         throw e;
                     }
-                }
-            } else {
-                st.execute("DROP TABLE IF EXISTS " + table);
-                if ("postgres".equals(engineOf(conn))) {
-                    st.execute("DROP TABLE IF EXISTS " + dedupTable(table));
                 }
             }
             // tableEnsured is deliberately NOT cleared: creating a queue forces its DDL, and operations racing this

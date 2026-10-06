@@ -266,12 +266,7 @@ public final class PostgresSearchStore {
             return;
         }
         try (Connection c = t.open(); var st = c.createStatement()) {
-            st.execute("CREATE TABLE IF NOT EXISTS warp_os_catalog (name TEXT PRIMARY KEY, uuid TEXT NOT NULL, "
-                    + "table_name TEXT NOT NULL, settings JSONB NOT NULL, mappings JSONB NOT NULL, "
-                    + "aliases JSONB NOT NULL DEFAULT '{}', created BIGINT NOT NULL, closed BOOLEAN NOT NULL DEFAULT FALSE)");
-            st.execute("ALTER TABLE warp_os_catalog ADD COLUMN IF NOT EXISTS refresh_state JSONB NOT NULL DEFAULT '{}'");
-            st.execute("CREATE TABLE IF NOT EXISTS warp_os_templates (kind TEXT NOT NULL, name TEXT NOT NULL, "
-                    + "body JSONB NOT NULL, PRIMARY KEY (kind, name))");
+            com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "oswire_catalog", java.util.Map.of());
         } catch (SQLException e) {
             ensured.remove(key);
             throw e;
@@ -543,8 +538,7 @@ public final class PostgresSearchStore {
         deleteCatalog(m.name);
         for (BackendTarget t : allShardTargets()) {
             try (Connection c = t.open(); var st = c.createStatement()) {
-                st.execute("DROP TABLE IF EXISTS " + m.table);
-                st.execute("DROP SEQUENCE IF EXISTS " + m.table + "_seq");
+                com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "oswire_drop_index", java.util.Map.of("table", m.table));
             }
             ensured.remove(m.table + "@" + t.jdbcUrl());
         }
@@ -557,13 +551,7 @@ public final class PostgresSearchStore {
                 continue;
             }
             try (Connection c = target.open(); var st = c.createStatement()) {
-                st.execute("CREATE SEQUENCE IF NOT EXISTS " + m.table + "_seq MINVALUE 0 START 0");
-                st.execute("CREATE TABLE IF NOT EXISTS " + m.table + " (doc_id TEXT PRIMARY KEY, source JSONB NOT NULL, "
-                        + "embedding JSONB, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), "
-                        + "seq_no BIGINT NOT NULL DEFAULT 0, version BIGINT NOT NULL DEFAULT 1)");
-                st.execute("ALTER TABLE " + m.table + " ADD COLUMN IF NOT EXISTS seq_no BIGINT NOT NULL DEFAULT 0");
-                st.execute("ALTER TABLE " + m.table + " ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1");
-                st.execute("ALTER TABLE " + m.table + " ADD COLUMN IF NOT EXISTS ins_seq BIGINT");
+                com.sayonora.warp.core.DdlTemplates.run(st, "postgres", "oswire_index_tables", java.util.Map.of("table", m.table));
             } catch (SQLException e) {
                 ensured.remove(key);
                 throw e;

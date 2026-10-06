@@ -17,18 +17,15 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Project rule: DDL lives in {@code src/main/resources/ddl/<engine>/<name>.sql} and is loaded through {@link DdlTemplates}, not written as
- * Java string literals. This fails when a main-code file outside the list below puts {@code CREATE TABLE}, {@code CREATE INDEX},
- * {@code CREATE ... FUNCTION/TRIGGER} or {@code ALTER TABLE ... ADD} in a string literal. The list is the work that is still to be moved
- * (static store schemas) or that builds DDL from a runtime name rather than being a fixed schema; shrink it, never grow it.
+ * Java string literals. This fails when a main-code file outside the list below puts {@code CREATE TABLE/INDEX/SCHEMA/SEQUENCE/FUNCTION/TRIGGER},
+ * {@code DROP TABLE/INDEX/SCHEMA/SEQUENCE/TRIGGER} or {@code ALTER TABLE} in a string literal. Statements whose identifiers are only known at
+ * run time are still files: the identifiers are {@code ${placeholders}} (see {@code ddl/postgres/mongowire_collection.sql}). The list below is
+ * code that assembles DDL from a runtime shape that a template cannot express, or only matches / prints SQL text; shrink it, never grow it.
  */
 class NoInlineDdlTest {
 
     private static final Pattern INLINE_DDL = Pattern.compile(
-            "\"[^\"]*(CREATE (TABLE|INDEX|UNIQUE INDEX|OR REPLACE FUNCTION|TRIGGER)|ALTER TABLE [A-Za-z_]+ ADD)");
-
-    /** Still inline: static store schemas not yet moved. */
-    private static final Set<String> STORES_TO_MOVE = Set.of("dynamowire/PgItemStore.java", "influxwire/PgTimeSeriesStore.java",
-            "mongowire/PostgresDocumentStore.java", "oswire/PostgresSearchStore.java");
+            "\"[^\"]*(CREATE (TABLE|INDEX|UNIQUE INDEX|SCHEMA|SEQUENCE|OR REPLACE FUNCTION|TRIGGER)|DROP (TABLE|INDEX|SCHEMA|SEQUENCE|TRIGGER)|ALTER TABLE)");
 
     /** DDL built from a runtime name or a user's statement, or SQL text that is only matched, translated or printed. */
     private static final Set<String> DYNAMIC_OR_NOT_EXECUTED = Set.of("cluster/CacheTriggerInstaller.java", "rollup/RollupDefinition.java",
@@ -42,7 +39,7 @@ class NoInlineDdlTest {
         try (Stream<Path> files = Files.walk(root)) {
             for (Path f : (Iterable<Path>) files.filter(p -> p.toString().endsWith(".java"))::iterator) {
                 String rel = root.relativize(f).toString();
-                if (STORES_TO_MOVE.contains(rel) || DYNAMIC_OR_NOT_EXECUTED.contains(rel) || rel.equals("core/DdlTemplates.java")) {
+                if (DYNAMIC_OR_NOT_EXECUTED.contains(rel) || rel.equals("core/DdlTemplates.java")) {
                     continue;
                 }
                 for (String line : Files.readAllLines(f)) {
@@ -70,5 +67,27 @@ class NoInlineDdlTest {
         assertNotNull(DdlTemplates.loadStatements("mysql", "warp_audit_log", Map.of()));
         assertNotNull(DdlTemplates.loadStatements("mysql", "warp_kv_config", Map.of()));
         assertEquals(null, DdlTemplates.loadStatements("oracle", "warp_audit_log", Map.of()));
+    }
+
+    /** A mistyped file name would otherwise only fail when that code path first runs. */
+    @Test
+    void everyDdlFileNamedInMainCodeExists() throws IOException {
+        Pattern ref = Pattern.compile("DdlTemplates\\.(?:run|loadStatements)\\((?:\\w+,\\s*)?\"(postgres|mysql|oracle|sqlserver)\",\\s*\"([a-z0-9_]+)\"");
+        Path root = Path.of("src/main/java/com/sayonora/warp");
+        Set<String> missing = new TreeSet<>();
+        int seen = 0;
+        try (Stream<Path> files = Files.walk(root)) {
+            for (Path f : (Iterable<Path>) files.filter(p -> p.toString().endsWith(".java"))::iterator) {
+                var m = ref.matcher(Files.readString(f));
+                while (m.find()) {
+                    seen++;
+                    if (!Files.exists(Path.of("src/main/resources/ddl", m.group(1), m.group(2) + ".sql"))) {
+                        missing.add(m.group(1) + "/" + m.group(2) + ".sql (named in " + root.relativize(f) + ")");
+                    }
+                }
+            }
+        }
+        assertTrue(seen > 20, "the scan found only " + seen + " references: the pattern no longer matches how DdlTemplates is called");
+        assertEquals(Set.of(), missing);
     }
 }

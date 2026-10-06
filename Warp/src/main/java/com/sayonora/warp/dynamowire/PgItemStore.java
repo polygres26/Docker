@@ -261,9 +261,7 @@ public final class PgItemStore {
             if ("postgres".equals(engine)) {
                 // Table metadata (attribute definitions, secondary indexes, billing, TTL, tags) as a JSON
                 // document; added in place so catalogs created by older versions keep working.
-                st.execute("ALTER TABLE _dynamo_tables ADD COLUMN IF NOT EXISTS meta text");
-                st.execute("CREATE TABLE IF NOT EXISTS _dynamo_txn_tokens (token text PRIMARY KEY, request_hash text NOT NULL, "
-                        + "created_millis bigint NOT NULL)");
+                DdlTemplates.run(st, "postgres", "dynamowire_catalog_extras", java.util.Map.of());
             }
         }
         catalogEnsured.put(url, Boolean.TRUE);
@@ -397,13 +395,14 @@ public final class PgItemStore {
             where.append(IndexSql.presence(k));
         }
         try (var st = c.createStatement()) {
-            st.execute("CREATE INDEX IF NOT EXISTS " + idx.pgName() + " ON " + pg + " (" + cols + ") WHERE " + where);
+            DdlTemplates.run(st, "postgres", "dynamowire_gsi_index", java.util.Map.of("index", idx.pgName(), "table", pg,
+                    "columns", cols.toString(), "where", where.toString()));
         }
     }
 
     void dropIndexDdl(Connection c, TableSchema.IndexDef idx) throws SQLException {
         try (var st = c.createStatement()) {
-            st.execute("DROP INDEX IF EXISTS " + idx.pgName());
+            DdlTemplates.run(st, "postgres", "dynamowire_drop_index", java.util.Map.of("index", idx.pgName()));
         }
     }
 
@@ -414,14 +413,14 @@ public final class PgItemStore {
     void createTtlIndexDdl(Connection c, TableSchema schema) throws SQLException {
         String attr = IndexSql.lit(schema.meta().ttlAttribute());
         try (var st = c.createStatement()) {
-            st.execute("CREATE INDEX IF NOT EXISTS " + shorten(ttlIndexName(schema)) + " ON " + pgTableName(schema.tableName())
-                    + " (((item->" + attr + "->>'N')::numeric)) WHERE item->" + attr + "->>'N' IS NOT NULL");
+            DdlTemplates.run(st, "postgres", "dynamowire_ttl_index", java.util.Map.of("index", shorten(ttlIndexName(schema)),
+                    "table", pgTableName(schema.tableName()), "attr", attr));
         }
     }
 
     void dropTtlIndexDdl(Connection c, TableSchema schema) throws SQLException {
         try (var st = c.createStatement()) {
-            st.execute("DROP INDEX IF EXISTS " + shorten(ttlIndexName(schema)));
+            DdlTemplates.run(st, "postgres", "dynamowire_drop_index", java.util.Map.of("index", shorten(ttlIndexName(schema))));
         }
     }
 
@@ -456,7 +455,7 @@ public final class PgItemStore {
         try {
             for (Connection shardConn : borrowAllShardConnections()) {
                 try (shardConn; var st = shardConn.createStatement()) {
-                    st.execute("DROP TABLE IF EXISTS " + pgTableName(tableName));
+                    DdlTemplates.run(st, "postgres", "dynamowire_drop_table", java.util.Map.of("table", pgTableName(tableName)));
                 }
             }
             try (Connection c = borrowCatalogConnection()) {
