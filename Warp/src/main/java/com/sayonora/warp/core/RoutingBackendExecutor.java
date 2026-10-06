@@ -283,7 +283,11 @@ public final class RoutingBackendExecutor implements BackendExecutor {
     }
 
     private ExecutionResult executeScatterGather(Statement statement) throws SQLException {
-        if (!statement.sqlText().strip().regionMatches(true, 0, "SELECT", 0, 6)) {
+        String head = statement.sqlText().strip();
+        if (head.regionMatches(true, 0, "UPDATE", 0, 6) || head.regionMatches(true, 0, "DELETE", 0, 6)) {
+            return scatterWrite(statement);
+        }
+        if (!head.regionMatches(true, 0, "SELECT", 0, 6)) {
             throw ErrorCatalog.sqlException("ERR_SCATTER_ONLY_SELECT", statement.sqlText());
         }
 
@@ -365,6 +369,48 @@ public final class RoutingBackendExecutor implements BackendExecutor {
      *     actually referenced in {@code sql} -- regardless of whether it's a JOIN or a plain
      *     scatter, unlike {@link ShardJoinExecutor#matchedTableShardRules}, which additionally
      *     requires a JOIN keyword. */
+    /**
+     * An UPDATE or DELETE of a declaratively sharded table that cannot be proven to touch one shard runs on every shard of that table,
+     * on each shard's primary, and the affected-row counts are added up. The shards are separate databases, so the statement is not
+     * atomic across them: if one fails after others applied it, the error says which shards already did, and nothing is rolled back. For
+     * the same reason it is refused inside a transaction.
+     */
+    private ExecutionResult scatterWrite(Statement statement) throws SQLException {
+        RouterStage.TableShardRule rule = null;
+        for (RouterStage.TableShardRule candidate : matchedTableShardRules(statement.sqlText())) {
+            if (!(WriteShardKey.analyze(statement.sqlText(), candidate.tableName(), candidate.column(), statement.bindParams())
+                    instanceof WriteShardKey.NotApplicable)) {
+                rule = candidate;
+            }
+        }
+        if (rule == null) {
+            throw ErrorCatalog.sqlException("ERR_SCATTER_ONLY_SELECT", statement.sqlText());
+        }
+        if (transactionConnections != null) {
+            throw ErrorCatalog.sqlException("ERR_SHARD_WRITE_IN_TRANSACTION", rule.tableName());
+        }
+        List<String> shardNames = ShardingStrategy.allBackends(rule.strategy());
+        checkScope(statement, shardNames);
+        long total = 0;
+        int applied = 0;
+        for (String shardName : shardNames) {
+            BackendTarget target = registry.resolveForRouting(shardName);
+            if (target == null) {
+                throw ErrorCatalog.sqlException("ERR_SHARD_UNKNOWN_BACKEND", shardName);
+            }
+            try {
+                total += executeOnFreshConnection(target, statement).updateCount();
+                applied++;
+            } catch (SQLException e) {
+                if (applied == 0) {
+                    throw e;
+                }
+                throw ErrorCatalog.sqlException("ERR_SHARD_WRITE_PARTIAL", applied, shardNames.size(), shardName, e.getMessage());
+            }
+        }
+        return ExecutionResult.ofUpdate(total);
+    }
+
     private List<RouterStage.TableShardRule> matchedTableShardRules(String sql) {
         List<RouterStage.TableShardRule> matched = new ArrayList<>();
         for (RouterStage.TableShardRule rule : tableShardRules) {
