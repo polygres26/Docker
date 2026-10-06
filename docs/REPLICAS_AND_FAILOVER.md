@@ -148,7 +148,7 @@ tried it in your environment.
   `failoverMode=promote` is rejected by the API for Oracle, and a `promote` entry in `WARP_BACKENDS`
   is monitored but recorded as blocked.
 
-## SQL Server Availability Groups (follow only)
+## SQL Server Availability Groups (follow, promote and planned switchover)
 
 **Verification status:** exercised live (`SqlServerAgLiveTest`) against SQL Server 2022 Developer in a
 two-node **read-scale** AG (`CLUSTER_TYPE = NONE`, asynchronous commit, manual failover, readable
@@ -181,14 +181,28 @@ untested.
   **Survivors:** after the forced failover the other secondaries stay suspended, so Warp runs
   `SET (ROLE = SECONDARY)` then `SET HADR RESUME` on each (repeated until it works, because a resume issued right after
   the failover can be accepted and do nothing) and waits for it to synchronize from the new primary. Verified live on
-  a three-node AG. **Old primary:** when it returns it is a *second primary* that still takes writes. Warp reports it
-  (`rejoin-needed` plus the split-brain alarm) and does not demote it (the stale-writer guard below takes it out of service with
-  `ALTER AVAILABILITY GROUP ... OFFLINE`): demoting it with
-  `SET (ROLE = SECONDARY)` failed live every time with error 41104, and resuming it would discard whatever it committed
-  that the new primary lacks (Warp cannot prove that is nothing: the commit and hardened LSNs move during crash recovery
-  even when no user data was written). A DBA must demote or rebuild it. No planned switchover. Live-verified on SQL
-  Server 2022 (Warp promoted a secondary after the primary container was killed; the other secondary resumed and
-  received the new primary's writes); not verified: clustered AGs (refused by design), synchronous commit. Azure Synapse is not supported.
+  a three-node AG.
+
+- **Planned switchover** (read-scale AG, `CLUSTER_TYPE = NONE`): `POST /api/failover/{backend}/switchover`. Warp puts the primary's and the target's
+  replicas in synchronous commit, requires one synchronized secondary to commit (`REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 1`) and waits for the target
+  to be `SYNCHRONIZED` (`WARP_SWITCHOVER_SYNC_SECONDS`, 30), so a commit is acknowledged only after the target has hardened it. It then runs
+  `FORCE_FAILOVER_ALLOW_DATA_LOSS` on the target (which loses nothing, being synchronized), puts the required-secondaries setting back at once (the new primary
+  has no synchronized secondary yet and would refuse access with error 988), resumes the old primary, which the group has made a secondary, and restores the
+  original availability modes. There is no separate "stop writes" step on SQL Server: `SET (ROLE = SECONDARY)` on a live primary fails with error 41104 and
+  changes nothing (a finding that overturns the earlier note here that demotion "happens" despite the error). A transaction that was still waiting for its
+  acknowledgement when the target took over is rolled back, which its client sees as an error. If the target never synchronizes, nothing changes and the
+  modes are restored. Verified live on SQL Server 2022, there and back under write load (every acknowledged write present, about 2-3 s per switchover) and with
+  an aborted attempt.
+- **Old primary after a crash failover.** When its instance starts, a replica of a group with no cluster manager brings itself online as **primary** (the
+  error log says it is "preparing to transition to the primary role"), so it is always a *second primary* that takes writes, and **no T-SQL demotes it**:
+  `SET (ROLE = SECONDARY)` fails with 41104 and changes nothing, even after `OFFLINE`. What works (verified live): take its group offline
+  (`ALTER AVAILABILITY GROUP ... OFFLINE`, which stops its writes and leaves it RESOLVING), restart the instance (it then joins as a secondary), and run
+  `ALTER DATABASE ... SET HADR RESUME`, which **discards whatever it committed that the new primary lacks**. Warp cannot restart an instance, so it does this
+  only when `WARP_FAILOVER_REJOIN_COMMAND` is set to a command that restarts it (the same variable the Postgres rebuild uses; the command gets
+  `WARP_REJOIN_NODE_URL`, `WARP_REJOIN_PRIMARY_URL`, `_HOST`, `_PORT` and `_USER` in its environment): Warp takes the group offline, runs it, waits for the node to
+  return as a secondary and resumes it. Verified live (container killed, survivor promoted by Warp, old primary restarted, offline, restarted by the
+  command, resumed, holding the new primary's rows). Without the command Warp reports `rejoin-needed` with these steps, and the stale-writer guard takes the node
+  offline. Not exercised: clustered AGs (refused by design), synchronous commit as a standing configuration, Azure Synapse (not supported).
 
 ## Promote mode
 
@@ -249,8 +263,9 @@ promotions Warp performs; in `follow` mode whoever promoted is responsible for t
 
 The Replicas page has a "Make primary" button on each replica (with a confirmation step) that calls this API.
 `POST /api/failover/{backend}/switchover` with `{"target": "<replica url>"}` (admin role) swaps the primary
-on purpose, without losing a committed transaction. Postgres and MySQL only; allowed in `follow` or
-`promote` mode (not `off`).
+on purpose, without losing a committed transaction. Postgres, MySQL and SQL Server (read-scale availability groups); not Oracle. Allowed in
+`follow` or `promote` mode (not `off`). SQL Server does not follow the freeze, catch-up, promote steps below: it prepares synchronous commit, promotes the
+synchronized target and resumes the old primary instead (see its section).
 
 1. Preconditions: the primary is writable, the target is a configured, reachable, read-only replica.
    If the config database is reachable Warp takes the failover lease for the duration, so no other
@@ -272,7 +287,8 @@ though the catch-up check still guards the target. **Postgres: the old primary i
 replicating**: making a running primary a standby needs a restart with `standby.signal` (and usually
 `pg_rewind`) on the host, which Warp cannot do over SQL. **MySQL: the old primary becomes a GTID replica
 using the backend's own user/password as the replication account** (so that user needs REPLICATION SLAVE;
-`GET_SOURCE_PUBLIC_KEY=1` is used so caching_sha2 works without TLS). Oracle and SQL Server are not supported.
+`GET_SOURCE_PUBLIC_KEY=1` is used so caching_sha2 works without TLS). **SQL Server: the old primary becomes a synchronizing secondary of the new primary.**
+Oracle is not supported.
 
 ### Rejoining a returned old primary
 
@@ -285,6 +301,9 @@ replicating (typically the old primary coming back after a failover) and tries t
   with errant transactions, or without `gtid_mode=ON`, is left exactly as found and reported
   `rejoin-needed`; it must be rebuilt. The replication account is the backend's own user and password
   (as for a planned switchover).
+- **SQL Server:** a returned old primary is always a second primary and no T-SQL demotes it; Warp takes its group offline, runs
+  `WARP_FAILOVER_REJOIN_COMMAND` (a command that restarts the instance), waits for it to return as a secondary and resumes it, discarding what it committed
+  that the new primary lacks (see the SQL Server section). Without the command it is only reported.
 - **Postgres:** Warp cannot demote a running primary over SQL and has no host access, so by default it only reports
   `rejoin-needed` (stop the node and rebuild it with `pg_rewind` or `pg_basebackup`). Set
   `WARP_FAILOVER_REJOIN_COMMAND` to have Warp run that rebuild for you: the command is run through `sh -c` with

@@ -68,6 +68,14 @@ public interface EngineHa {
         return false;
     }
 
+    /**
+     * What a planned switchover to {@code target} needs done while the primary is still serving, before writes are stopped (SQL Server:
+     * put both replicas in synchronous commit and wait until the target is synchronized, so the demotion that follows cannot lose a
+     * commit). Throws, after undoing what it did, when the target is not ready. Most engines need nothing.
+     */
+    default void prepareSwitchover(BackendTarget primary, BackendTarget target) throws Exception {
+    }
+
     /** Stops the primary accepting writes (best effort for what it can enforce) without shutting it down. */
     default void freezeWrites(BackendTarget primary) throws Exception {
         throw new UnsupportedOperationException("planned switchover is not supported for " + primary.dialect());
