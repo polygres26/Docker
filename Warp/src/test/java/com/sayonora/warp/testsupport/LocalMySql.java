@@ -31,6 +31,18 @@ public final class LocalMySql {
         return "jdbc:mysql://127.0.0.1:" + port + "/mysql?allowPublicKeyRetrieval=true&useSSL=false";
     }
 
+    public String url(String database) {
+        return "jdbc:mysql://127.0.0.1:" + port + "/" + database + "?allowPublicKeyRetrieval=true&useSSL=false";
+    }
+
+    public boolean writable() {
+        try {
+            return scalar("select @@global.read_only") == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public Connection conn() throws Exception {
         return DriverManager.getConnection(url(), "root", "");
     }
