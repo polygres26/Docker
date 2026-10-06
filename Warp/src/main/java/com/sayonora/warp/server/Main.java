@@ -389,6 +389,25 @@ public final class Main {
                     return b == null ? null : b.url();
                 }).orElse(null));
         backendRegistry.setFailoverMonitor(failoverMonitor);
+        com.sayonora.warp.core.WriteFence writeFence = com.sayonora.warp.core.WriteFence.fromEnv(
+                new com.sayonora.warp.core.WriteFence.Source() {
+                    public long latestVersion() throws Exception {
+                        return configStore.latestVersion();
+                    }
+
+                    public long appliedVersion() {
+                        return configStore.appliedVersion();
+                    }
+
+                    public void catchUp() {
+                        configStore.catchUpNow();
+                    }
+                });
+        if (writeFence != null) {
+            backendRegistry.setWriteFence(writeFence);
+            writeFence.start();
+            log.info("write fence on: writes are refused unless this instance has applied the newest config version");
+        }
         failoverMonitor.start();
 
         com.sayonora.warp.config.FirewallRuleStore firewallRuleStore = new com.sayonora.warp.config.FirewallRuleStore(options);

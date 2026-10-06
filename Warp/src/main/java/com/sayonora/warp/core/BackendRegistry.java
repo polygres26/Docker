@@ -145,6 +145,17 @@ public final class BackendRegistry {
     private final Map<String, FailoverOverride> failoverOverrides = new java.util.concurrent.ConcurrentHashMap<>();
     private volatile FailoverMonitor failoverMonitor;
 
+    private volatile WriteFence writeFence;
+
+    /** The per-write staleness fence, or null when {@code WARP_WRITE_FENCE} is off. */
+    public WriteFence writeFence() {
+        return writeFence;
+    }
+
+    public void setWriteFence(WriteFence fence) {
+        this.writeFence = fence;
+    }
+
     public FailoverMonitor failoverMonitor() {
         return failoverMonitor;
     }
