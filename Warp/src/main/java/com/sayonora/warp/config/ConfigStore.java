@@ -180,6 +180,7 @@ public final class ConfigStore implements AutoCloseable {
             throw new IllegalStateException("listen() already called on this ConfigStore");
         }
         lastDelivered.set(appliedVersion);
+        this.listenCallback = callback;
         listenExecutor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "warp-config-listen");
             t.setDaemon(true);
@@ -226,6 +227,21 @@ public final class ConfigStore implements AutoCloseable {
         }
     }
 
+    private volatile Consumer<Version> listenCallback;
+
+    /** The newest config version this process has applied. */
+    public long appliedVersion() {
+        return lastDelivered.get();
+    }
+
+    /** Applies the newest stored version now (no-op when already current or not listening). */
+    public void catchUpNow() {
+        Consumer<Version> cb = listenCallback;
+        if (cb != null) {
+            catchUp(cb, "on demand (a write needed the config to be current)");
+        }
+    }
+
     /** Delivers the latest stored version when it is newer than the last one delivered. */
     private void catchUp(Consumer<Version> callback, String how) {
         try {
@@ -257,7 +273,8 @@ public final class ConfigStore implements AutoCloseable {
         }
     }
 
-    private long latestVersion() throws SQLException {
+    /** The newest stored config version (0 when none). */
+    public long latestVersion() throws SQLException {
         try (Connection conn = com.sayonora.warp.pgwire.PgConnections.open(options); Statement st = conn.createStatement();
                 ResultSet rs = st.executeQuery("SELECT coalesce(max(version), 0) FROM warp_config")) {
             rs.next();

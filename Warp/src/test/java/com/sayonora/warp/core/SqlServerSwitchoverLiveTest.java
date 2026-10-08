@@ -112,7 +112,9 @@ class SqlServerSwitchoverLiveTest {
                 .env("WARP_FAILOVER_CONFIRM_PROBES", "3")
                 .env("WARP_FAILOVER_COOLDOWN_SECONDS", "5")
                 .env("WARP_ADMIN_TOKEN", BrownoutHarness.TOKEN)
+                .env("WARP_GRPC_PORT", String.valueOf(LocalPostgres.freePort()))
                 .env("WARP_OTEL_ENDPOINT", "disabled");
+        BrownoutHarness.separatePorts(b);
         for (int i = 0; i + 1 < extraEnv.length; i += 2) {
             b.env(extraEnv[i], extraEnv[i + 1]);
         }
@@ -310,5 +312,74 @@ class SqlServerSwitchoverLiveTest {
         try (Connection c = conn(url(primary)); Statement st = c.createStatement()) {
             st.execute("DELETE FROM dbo.t WHERE v = 'probe'");
         }
+    }
+
+    private static String primaryUrlOf(WarpProcess w) throws Exception {
+        var root = JsonParser.parseString(BrownoutHarness.http("GET", "http://localhost:" + w.metricsPort() + "/api/failover", null)).getAsJsonObject();
+        for (var g : root.getAsJsonArray("groups")) {
+            for (var n : g.getAsJsonObject().getAsJsonArray("nodes")) {
+                if ("primary".equals(n.getAsJsonObject().get("configuredRole").getAsString())) {
+                    return n.getAsJsonObject().get("url").getAsString();
+                }
+            }
+        }
+        return "";
+    }
+
+    private void fenceCase(boolean fence) throws Exception {
+        Assumptions.assumeTrue("1".equals(System.getenv("WARP_TEST_MSSQL_AG")), "set WARP_TEST_MSSQL_AG=1 after ag.sh up");
+        String bin = System.getenv("WARP_TEST_BROWNOUT_PG_BIN");
+        Assumptions.assumeTrue(bin != null && !bin.isBlank(), "set WARP_TEST_BROWNOUT_PG_BIN");
+        LocalPostgres cfg = LocalPostgres.primary(bin, Files.createTempDirectory("mssqlfence"), "cfg", LocalPostgres.freePort());
+        WarpProcess w0 = null;
+        WarpProcess w1 = null;
+        try {
+            int first = primaryPort();
+            int target = other(first);
+            String[] env = {"WARP_CONFIG_POLL_SECONDS", "0", "WARP_WRITE_FENCE", String.valueOf(fence), "WARP_WRITE_FENCE_REFRESH_MILLIS", "300"};
+            w0 = warp(cfg, first, env);
+            w1 = warp(cfg, first, env);
+            Thread.sleep(3000);
+            try (Connection c = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:" + cfg.port() + "/postgres", "warp", "secret");
+                    Statement st = c.createStatement()) {
+                st.execute("alter table warp_config disable trigger warp_config_notify_trigger");
+            }
+            assertTrue(switchover(w0, target).get("ok").getAsBoolean());
+            long t0 = System.currentTimeMillis();
+            String seen = "";
+            while (System.currentTimeMillis() - t0 < 12_000) {
+                seen = primaryUrlOf(w1);
+                if (seen.contains(":" + target + ";") || seen.contains(":" + target + "/")) {
+                    break;
+                }
+                Thread.sleep(250);
+            }
+            boolean learned = seen.contains(":" + target + ";") || seen.contains(":" + target + "/");
+            if (fence) {
+                assertTrue(learned, "the fenced instance still lists the old primary after 12 s: " + seen);
+            } else {
+                assertFalse(learned, "control: without the fence the instance should still be behind (poll is off)");
+            }
+            // put the group back as it was
+            assertTrue(switchover(w0, first).get("ok").getAsBoolean());
+        } finally {
+            if (w1 != null) {
+                w1.close();
+            }
+            if (w0 != null) {
+                w0.close();
+            }
+            cfg.stop("immediate");
+        }
+    }
+
+    @Test
+    void aFencedInstanceLearnsASqlServerSwitchoverWithNoNotificationAndNoPoll() throws Exception {
+        fenceCase(true);
+    }
+
+    @Test
+    void withoutTheFenceTheSameSqlServerInstanceStaysBehind() throws Exception {
+        fenceCase(false);
     }
 }
