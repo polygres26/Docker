@@ -467,6 +467,15 @@ qualifier needed anywhere), and the router picks the real fastest path per state
   each source matches the first in row count and checksum, which catches a write that slipped in), the new map is written as a config version, and the old
   copies are deleted while scatter reads of the table wait so no row is seen twice. A failure before the switch deletes what was copied and changes nothing; a
   failure while deleting leaves duplicates and says so (`POST /api/sharding/purge {"table","shard"}` finishes it). The target must already have the table.
+  **Converting an existing hash table:** `POST /api/sharding/convert {"table":"orders"}` rewrites a `hash` rule as a `slots` rule **without moving a row**: with a
+  slot count that is a multiple of the shard count N (default: the smallest multiple of N that is at least 1024) and slot s owned by shard s mod N, a key's
+  slot-owner is `(h mod slots) mod N = h mod N`, exactly where the hash rule already put it. Routing is identical before and after (checked on 5,000 keys at
+  the time of the call and in unit tests for N = 2, 3, 5 and 7), so no hold is needed and instances may pick the rule up at their own pace. Only `hash` tables
+  convert this way; consistent-hash, list, range and date tables would have to be reloaded. **A new shard joins first:** once the table exists on a backend that
+  is not in the rule, every query on it is ambiguous (schema discovery finds the table on an unrelated backend), so `POST /api/sharding/add-shard
+  {"table","shard"}` adds it as a member that owns no slots (`s3=` in the map), and `rebalance` does the same by itself before it copies. Maps print compactly
+  (`1024/stripe:s1,s2`, ranges with a step such as `0-1022/2`). Live (Postgres): 5,000 rows on two hash shards converted with 0 rows moved, keyed reads
+  unchanged, then 300 of 1,024 slots moved to a new third shard with the table found everywhere afterwards.
   **Limits:** it is not CockroachDB: nothing rebalances by itself (an operator or script starts it), the shards are separate databases, and the hold is in
   one Warp process, so it **refuses to run when other Warp instances are live** (`allowOtherInstances` overrides that for a table the others do not write).
   It copies with JDBC `getObject`/`setObject` (LOBs as bytes or text), so identity/generated columns that refuse explicit values and exotic types are not
