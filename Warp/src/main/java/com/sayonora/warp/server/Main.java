@@ -637,6 +637,17 @@ public final class Main {
                 connectionGate, oauth, firewallRuleStore, configStore, backendRegistry, dialectTranslationStage,
                 adminWebDir, options, mcpMetrics, captureBuffer, auditLog, xaRecoveryLog, federationPlanStore);
         metricsServer.setQueryRepairStage(queryRepairStage);
+        // The hold on moving slots is cluster-wide when the control plane can carry it: every instance follows the gate rows it writes.
+        com.sayonora.warp.config.PgReshardCoordination reshardCoordination = null;
+        try {
+            String selfId = com.sayonora.warp.config.NodeRegistry.plannedNodeId(metricsPort).toString();
+            reshardCoordination = new com.sayonora.warp.config.PgReshardCoordination(options, () -> selfId);
+            reshardCoordination.ensureSchema();
+            reshardCoordination.start(com.sayonora.warp.core.ReshardGate.INSTANCE, configStore::appliedVersion, configStore::catchUpNow);
+        } catch (Exception e) {
+            log.warn("rebalancing: the cluster-wide hold is unavailable ({}); a rebalance will need a single live Warp instance", e.toString());
+            reshardCoordination = null;
+        }
         metricsServer.setSlotRebalancer(new com.sayonora.warp.core.SlotRebalancer(backendRegistry, routerStage::tableShardRules,
                 new com.sayonora.warp.core.SlotRebalancer.SpecStore() {
                     public String tableShards() {
@@ -647,12 +658,13 @@ public final class Main {
                         }
                     }
 
-                    public void apply(String newTableShards) throws Exception {
+                    public long apply(String newTableShards) throws Exception {
                         WarpConfig latest = configStore.readLatest().map(v -> v.payload()).orElse(config);
                         WarpConfig next = latest.withRouterTableShards(newTableShards);
-                        configStore.write(next);
+                        long version = configStore.write(next);
                         routerStage.reconfigure(next.routerSchemaRules(), next.routerPredicateRules(), next.routerValueShardRules(),
                                 next.routerShardTables(), next.routerTableShards());
+                        return version;
                     }
                 }, () -> {
                     try {
@@ -666,7 +678,7 @@ public final class Main {
                     } catch (Exception e) {
                         throw new IllegalStateException("cannot count live Warp instances: " + e.getMessage(), e);
                     }
-                }));
+                }, reshardCoordination));
         metricsServer.setAnomalyScheduler(anomalyScheduler);
         {
             var insights = metricsServer.insights();

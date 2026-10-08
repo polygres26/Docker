@@ -67,7 +67,8 @@ class SlotShardingTest {
                 return "orders:slots:customer_id:" + params;
             }
 
-            public void apply(String s) {
+            public long apply(String s) {
+                return 1;
             }
         }, () -> 1);
     }
@@ -163,8 +164,9 @@ class SlotShardingTest {
                 return "orders:hash:customer_id:a,b";
             }
 
-            public void apply(String spec) {
+            public long apply(String spec) {
                 applied[0] = spec;
+                return 1;
             }
         }, () -> 1);
     }

@@ -9,6 +9,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -48,7 +49,8 @@ public final class SlotRebalancer {
     public interface SpecStore {
         String tableShards();
 
-        void apply(String newTableShards) throws Exception;
+        /** Writes the new text as a config version and applies it in this process; returns the version. */
+        long apply(String newTableShards) throws Exception;
     }
 
     public record Plan(String table, String to, Map<String, List<Integer>> slotsBySource, String currentParams, String newParams) {
@@ -65,12 +67,20 @@ public final class SlotRebalancer {
     private final Supplier<List<RouterStage.TableShardRule>> rules;
     private final SpecStore store;
     private final IntSupplier liveInstances;
+    private final ReshardCoordinator coordinator;
 
     public SlotRebalancer(BackendRegistry registry, Supplier<List<RouterStage.TableShardRule>> rules, SpecStore store, IntSupplier liveInstances) {
+        this(registry, rules, store, liveInstances, null);
+    }
+
+    /** @param coordinator null for a hold in this process only (then it needs a single live instance); otherwise the hold is cluster-wide */
+    public SlotRebalancer(BackendRegistry registry, Supplier<List<RouterStage.TableShardRule>> rules, SpecStore store, IntSupplier liveInstances,
+            ReshardCoordinator coordinator) {
         this.registry = registry;
         this.rules = rules;
         this.store = store;
         this.liveInstances = liveInstances;
+        this.coordinator = coordinator;
     }
 
     private RouterStage.TableShardRule rule(String table) {
@@ -132,13 +142,80 @@ public final class SlotRebalancer {
         return new Plan(rule.tableName(), to, bySource, s.toParams(), s.withOwner(chosen, to).toParams());
     }
 
+    /** Applies a hold phase: through the coordinator (every live instance, acknowledged) or, with none, to this process's gate. */
+    private void phase(ReshardCoordinator.Phase phase, String table, Collection<Integer> slots, boolean blockScatter, long flipVersion) throws Exception {
+        if (coordinator != null) {
+            long epoch = coordinator.publish(table, phase, slots, blockScatter, flipVersion);
+            coordinator.awaitAcks(table, epoch, ackMillis());
+            return;
+        }
+        ReshardGate gate = ReshardGate.INSTANCE;
+        switch (phase) {
+            case FREEZE -> {
+                gate.freeze(table, slots);
+                if (blockScatter) {
+                    gate.blockScatter(table, true);
+                }
+                if (!gate.awaitDrained(table, 60_000)) {
+                    throw new IllegalStateException("writes admitted before the freeze did not finish within 60 s");
+                }
+                if (blockScatter && !gate.awaitScatterDrained(table, 60_000)) {
+                    throw new IllegalStateException("scatter reads admitted before the copy did not finish within 60 s");
+                }
+            }
+            case SCATTER -> {
+                gate.blockScatter(table, true);
+                if (!gate.awaitScatterDrained(table, 60_000)) {
+                    throw new IllegalStateException("scatter reads admitted before the switch did not finish within 60 s");
+                }
+            }
+            case FLIP -> {
+                gate.blockScatter(table, true);
+                gate.thaw(table);
+            }
+            default -> {
+                gate.thaw(table);
+                gate.blockScatter(table, false);
+            }
+        }
+    }
+
+    private static long ackMillis() {
+        try {
+            String v = System.getenv("WARP_RESHARD_ACK_SECONDS");
+            return (v == null || v.isBlank() ? 60 : Long.parseLong(v.trim())) * 1000L;
+        } catch (NumberFormatException e) {
+            return 60_000;
+        }
+    }
+
+    /** Keeps the published hold alive while a move runs. */
+    private java.util.concurrent.ScheduledExecutorService keepAlive(String table) {
+        if (coordinator == null) {
+            return null;
+        }
+        var ex = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "warp-reshard-lease");
+            t.setDaemon(true);
+            return t;
+        });
+        ex.scheduleWithFixedDelay(() -> {
+            try {
+                coordinator.renew(table);
+            } catch (Exception e) {
+                log.warn("reshard: could not renew the hold on {}: {}", table, e.toString());
+            }
+        }, 5, 5, java.util.concurrent.TimeUnit.SECONDS);
+        return ex;
+    }
+
     public Result rebalance(Plan plan, boolean allowOtherInstances) throws Exception {
-        if (!allowOtherInstances) {
+        if (!allowOtherInstances && coordinator == null) {
             int live = liveInstances.getAsInt();
             if (live > 1) {
-                throw new IllegalStateException(live + " Warp instances are live: the hold on the moving slots exists only in this process, so another "
-                        + "instance would keep writing to the old shard. Run with a single instance, or pass allowOtherInstances=true if the others "
-                        + "do not write to this table");
+                throw new IllegalStateException(live + " Warp instances are live and no cluster-wide hold is available: another instance would keep "
+                        + "writing to the old shard. Run with a single instance, or pass allowOtherInstances=true if the others do not write to "
+                        + "this table");
             }
         }
         RouterStage.TableShardRule rule = rule(plan.table());
@@ -151,7 +228,6 @@ public final class SlotRebalancer {
             RUNNING.set(false);
             throw new IllegalStateException("the slot map changed since this plan was made; plan again");
         }
-        ReshardGate gate = ReshardGate.INSTANCE;
         String table = rule.tableName();
         String keyColumn = rule.column();
         BackendTarget target = registry.resolveForRouting(plan.to());
@@ -160,7 +236,9 @@ public final class SlotRebalancer {
         ShardingStrategy.SlotStrategy after = ShardingStrategy.SlotStrategy.parse(plan.newParams());
         long frozenAt = 0;
         boolean flipped = false;
+        boolean held = false;
         long copied = 0;
+        var lease = keepAlive(table);
         try {
             probeTable(target, table);
             if (!before.owners().contains(plan.to()) && !before.spareMembers().contains(plan.to())) {
@@ -168,19 +246,11 @@ public final class SlotRebalancer {
                 store.apply(replaceEntry(store.tableShards(), table, keyColumn, before.withSpare(plan.to()).toParams()));
                 before = before.withSpare(plan.to());
             }
-            gate.freeze(table, moving);
+            // The target already owning slots means scatter queries read it, and its copies of the moving rows would be counted twice next to the
+            // originals: scatter reads of this table then wait from the freeze until the old copies are gone.
+            held = true;
+            phase(ReshardCoordinator.Phase.FREEZE, table, moving, before.owners().contains(plan.to()), 0);
             frozenAt = System.currentTimeMillis();
-            if (!gate.awaitDrained(table, 60_000)) {
-                throw new IllegalStateException("writes admitted before the freeze did not finish within 60 s");
-            }
-            if (before.owners().contains(plan.to())) {
-                // The target already owns slots, so it is read by scatter queries and its copies of the moving rows would be counted twice
-                // next to the originals: scatter reads of this table wait from here until the old copies are gone.
-                gate.blockScatter(table, true);
-                if (!gate.awaitScatterDrained(table, 60_000)) {
-                    throw new IllegalStateException("scatter reads admitted before the copy did not finish within 60 s");
-                }
-            }
             purgeUnowned(target, plan.to(), table, keyColumn, before); // leftovers of an earlier failed attempt
             Map<String, long[]> firstScan = new LinkedHashMap<>();
             for (Map.Entry<String, List<Integer>> e : plan.slotsBySource().entrySet()) {
@@ -189,9 +259,9 @@ public final class SlotRebalancer {
                 firstScan.put(e.getKey(), r);
                 copied += r[0];
             }
-            long held = countOnTarget(target, table, keyColumn, before, moving);
-            if (held != copied) {
-                throw new IllegalStateException("verification failed: copied " + copied + " rows but the target holds " + held + " rows of the moved slots");
+            long onTarget = countOnTarget(target, table, keyColumn, before, moving);
+            if (onTarget != copied) {
+                throw new IllegalStateException("verification failed: copied " + copied + " rows but the target holds " + onTarget + " rows of the moved slots");
             }
             for (Map.Entry<String, List<Integer>> e : plan.slotsBySource().entrySet()) {
                 long[] again = checksum(registry.resolveForRouting(e.getKey()), table, keyColumn, before, new HashSet<>(e.getValue()));
@@ -201,14 +271,11 @@ public final class SlotRebalancer {
                             + again[0] + " now); nothing was switched, retry when writes to these slots are quiet");
                 }
             }
-            gate.blockScatter(table, true);
-            if (!gate.awaitScatterDrained(table, 60_000)) {
-                throw new IllegalStateException("scatter reads admitted before the switch did not finish within 60 s");
-            }
-            store.apply(replaceEntry(store.tableShards(), table, keyColumn, after.toParams()));
+            phase(ReshardCoordinator.Phase.SCATTER, table, moving, true, 0);
+            long version = store.apply(replaceEntry(store.tableShards(), table, keyColumn, after.toParams()));
             flipped = true;
-            gate.thaw(table);
-            long held1 = System.currentTimeMillis() - frozenAt;
+            phase(ReshardCoordinator.Phase.FLIP, table, moving, true, version);
+            long heldMillis = System.currentTimeMillis() - frozenAt;
             long removed = 0;
             String warning = null;
             try {
@@ -219,12 +286,10 @@ public final class SlotRebalancer {
                 warning = "the slots moved, but removing the old copies failed (" + e.getMessage() + "); rows of the moved slots are duplicated on "
                         + plan.slotsBySource().keySet() + " until POST /api/sharding/purge {table, shard} finishes the job";
                 log.error("rebalance of {}: {}", table, warning);
-            } finally {
-                gate.blockScatter(table, false);
             }
             log.warn("rebalance of {}: moved {} slots to {} ({} rows copied, {} removed from the sources, writes to the moving slots held {} ms)", table,
-                    moving.size(), plan.to(), copied, removed, held1);
-            return new Result(table, plan.to(), moving.size(), copied, removed, held1, plan.newParams(), warning);
+                    moving.size(), plan.to(), copied, removed, heldMillis);
+            return new Result(table, plan.to(), moving.size(), copied, removed, heldMillis, plan.newParams(), warning);
         } catch (Exception e) {
             if (!flipped) {
                 try {
@@ -235,8 +300,56 @@ public final class SlotRebalancer {
             }
             throw e;
         } finally {
-            gate.thaw(table);
-            gate.blockScatter(table, false);
+            if (held) {
+                try {
+                    if (coordinator != null) {
+                        coordinator.publish(table, ReshardCoordinator.Phase.OPEN, List.of(), false, 0);
+                    } else {
+                        phase(ReshardCoordinator.Phase.OPEN, table, List.of(), false, 0);
+                    }
+                } catch (Exception releaseFailure) {
+                    log.error("rebalance of {}: releasing the hold failed ({}); it ends when its lease runs out", table, releaseFailure.toString());
+                }
+            }
+            if (lease != null) {
+                lease.shutdownNow();
+            }
+            RUNNING.set(false);
+        }
+    }
+
+    /** Deletes, from {@code shard}, every row whose key the current slot map gives to another shard. */
+    public long purge(String table, String shard) throws Exception {
+        RouterStage.TableShardRule rule = rule(table);
+        ShardingStrategy.SlotStrategy s = slotted(rule);
+        BackendTarget t = registry.resolveForRouting(shard);
+        if (t == null) {
+            throw new IllegalArgumentException("'" + shard + "' is not a configured backend");
+        }
+        if (!RUNNING.compareAndSet(false, true)) {
+            throw new IllegalStateException("another rebalance is already running in this process");
+        }
+        var lease = keepAlive(rule.tableName());
+        boolean held = false;
+        try {
+            held = true;
+            phase(ReshardCoordinator.Phase.SCATTER, rule.tableName(), List.of(), true, 0);
+            return purgeUnowned(t, shard, rule.tableName(), rule.column(), s);
+        } finally {
+            if (held) {
+                try {
+                    if (coordinator != null) {
+                        coordinator.publish(rule.tableName(), ReshardCoordinator.Phase.OPEN, List.of(), false, 0);
+                    } else {
+                        phase(ReshardCoordinator.Phase.OPEN, rule.tableName(), List.of(), false, 0);
+                    }
+                } catch (Exception releaseFailure) {
+                    log.error("purge of {}: releasing the hold failed ({})", rule.tableName(), releaseFailure.toString());
+                }
+            }
+            if (lease != null) {
+                lease.shutdownNow();
+            }
             RUNNING.set(false);
         }
     }
@@ -298,26 +411,6 @@ public final class SlotRebalancer {
         }
         log.warn("sharded table {} converted from hash over {} to {} slots; no rows moved", rule.tableName(), hash.backends(), count);
         return converted.toParams();
-    }
-
-    /** Deletes, from {@code shard}, every row whose key the current slot map gives to another shard. */
-    public long purge(String table, String shard) throws Exception {
-        RouterStage.TableShardRule rule = rule(table);
-        ShardingStrategy.SlotStrategy s = slotted(rule);
-        BackendTarget t = registry.resolveForRouting(shard);
-        if (t == null) {
-            throw new IllegalArgumentException("'" + shard + "' is not a configured backend");
-        }
-        if (!RUNNING.compareAndSet(false, true)) {
-            throw new IllegalStateException("another rebalance is already running in this process");
-        }
-        try {
-            ReshardGate.INSTANCE.blockScatter(rule.tableName(), true);
-            return purgeUnowned(t, shard, rule.tableName(), rule.column(), s);
-        } finally {
-            ReshardGate.INSTANCE.blockScatter(rule.tableName(), false);
-            RUNNING.set(false);
-        }
     }
 
     // ---- the table spec ------------------------------------------------------------------------------------------------------------------
