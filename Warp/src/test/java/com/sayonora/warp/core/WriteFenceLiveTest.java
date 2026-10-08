@@ -32,36 +32,59 @@ class WriteFenceLiveTest {
     }
 
     private void run(boolean fence) throws Exception {
+        run(fence, false);
+    }
+
+    private void run(boolean fence, boolean mysql) throws Exception {
         String bin = System.getenv("WARP_TEST_BROWNOUT_PG_BIN");
-        Assumptions.assumeTrue(bin != null && !bin.isBlank(), "set WARP_TEST_BROWNOUT_PG_BIN");
+        String myBin = System.getenv("WARP_TEST_MYSQL_BIN");
+        Assumptions.assumeTrue(bin != null && !bin.isBlank() && (!mysql || myBin != null && !myBin.isBlank()),
+                "set WARP_TEST_BROWNOUT_PG_BIN (and WARP_TEST_MYSQL_BIN for the MySQL case)");
         Path dir = Files.createTempDirectory("wfence");
         LocalPostgres cfg = LocalPostgres.primary(bin, dir, "cfg", LocalPostgres.freePort());
-        LocalPostgres primary = LocalPostgres.primary(bin, dir, "primary", LocalPostgres.freePort());
+        LocalPostgres primary = mysql ? null : LocalPostgres.primary(bin, dir, "primary", LocalPostgres.freePort());
         LocalPostgres replica = null;
+        com.sayonora.warp.testsupport.LocalMySql myPrimary = null;
+        com.sayonora.warp.testsupport.LocalMySql myReplica = null;
         WarpProcess w0 = null;
         WarpProcess w1 = null;
         try {
-            replica = LocalPostgres.replicaOf(bin, dir, "replica", primary, LocalPostgres.freePort());
-            String spec = "pg=" + primary.url() + "|warp|secret||" + replica.url() + "~10|promote";
+            String spec;
+            String replicaUrl;
+            String replicaPort;
+            if (mysql) {
+                myPrimary = com.sayonora.warp.testsupport.LocalMySql.create(myBin, dir, "p", LocalPostgres.freePort(), 1);
+                myReplica = com.sayonora.warp.testsupport.LocalMySql.create(myBin, dir, "r", LocalPostgres.freePort(), 2);
+                myReplica.replicateFrom(myPrimary, 2);
+                myPrimary.exec("create database shard");
+                spec = "my=" + myPrimary.url("shard") + "|root|||" + myReplica.url("shard") + "~10|promote";
+                replicaUrl = myReplica.url("shard");
+                replicaPort = String.valueOf(myReplica.port());
+            } else {
+                replica = LocalPostgres.replicaOf(bin, dir, "replica", primary, LocalPostgres.freePort());
+                spec = "pg=" + primary.url() + "|warp|secret||" + replica.url() + "~10|promote";
+                replicaUrl = replica.url();
+                replicaPort = String.valueOf(replica.port());
+            }
             w0 = start(cfg, spec, fence);
             w1 = start(cfg, spec, fence);
             Thread.sleep(3000);
             try (var c = cfg.conn(); var st = c.createStatement()) {
                 st.execute("alter table warp_config disable trigger warp_config_notify_trigger");
             }
-            String res = BrownoutHarness.http("POST", "http://localhost:" + w0.metricsPort() + "/api/failover/pg/switchover",
-                    "{\"target\":\"" + replica.url() + "\"}");
+            String res = BrownoutHarness.http("POST", "http://localhost:" + w0.metricsPort() + "/api/failover/" + (mysql ? "my" : "pg") + "/switchover",
+                    "{\"target\":\"" + replicaUrl + "\"}");
             assertTrue(res.contains("\"ok\":true"), res);
             long t0 = System.currentTimeMillis();
             String seen = "";
             while (System.currentTimeMillis() - t0 < 8000) {
                 seen = primaryOf(w1);
-                if (seen.contains(":" + replica.port() + "/")) {
+                if (seen.contains(":" + replicaPort + "/")) {
                     break;
                 }
                 Thread.sleep(250);
             }
-            boolean learned = seen.contains(":" + replica.port() + "/");
+            boolean learned = seen.contains(":" + replicaPort + "/");
             long took = System.currentTimeMillis() - t0;
             if (fence) {
                 assertTrue(learned, "the fenced instance still lists the old primary after 8 s: " + seen);
@@ -76,9 +99,17 @@ class WriteFenceLiveTest {
             if (w0 != null) {
                 w0.close();
             }
-            primary.stop("immediate");
+            if (primary != null) {
+                primary.stop("immediate");
+            }
             if (replica != null) {
                 replica.stop("immediate");
+            }
+            if (myReplica != null) {
+                myReplica.stop();
+            }
+            if (myPrimary != null) {
+                myPrimary.stop();
             }
             cfg.stop("immediate");
         }
@@ -87,6 +118,16 @@ class WriteFenceLiveTest {
     @Test
     void aFencedInstanceLearnsASwitchoverWithinAboutASecondEvenWithNoNotificationAndNoPoll() throws Exception {
         run(true);
+    }
+
+    @Test
+    void aFencedInstanceLearnsAMySqlSwitchoverTheSameWay() throws Exception {
+        run(true, true);
+    }
+
+    @Test
+    void withoutTheFenceTheSameMySqlInstanceStaysBehind() throws Exception {
+        run(false, true);
     }
 
     @Test

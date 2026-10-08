@@ -408,8 +408,9 @@ Trade-offs: it is fail-closed, so writes depend on the config database being rea
 on every fenced instance, on every engine); it costs one in-memory check per write plus one small read per refresh; it applies to any write
 once any backend in the process has replicas, not only to writes for the replicated backend; reads are not fenced. The term is held in the
 instance, not on the database node, so a client that bypasses Warp is not fenced, and the check is a bound on the window, not a guarantee of
-zero stale writes (a write can pass the check just before a switchover lands). It is engine independent and has not been run against MySQL,
-SQL Server or Oracle backends.
+zero stale writes (a write can pass the check just before a switchover lands). It is engine independent: the same live case (notification suppressed, poll off, switchover through one of two instances) also passed against
+a MySQL primary with a replica and a SQL Server read-scale availability group, each with a control run showing the unfenced instance staying behind.
+Oracle has not been run (Warp does not switch Oracle over unless Data Guard control is enabled).
 
 What the guards do **not** cover: a partition that also cuts the replica off from the primary while clients can still reach the primary (the
 replica then hears nothing, so only the fence command helps, or the majority of Warp instances); two Warp instances with stale
