@@ -63,6 +63,50 @@ public final class ConfigStore implements AutoCloseable {
         }
     }
 
+    /**
+     * Read-modify-write of the latest config without losing a concurrent change: writers take a database advisory lock, read the latest version
+     * inside it, apply {@code change} (which gets the current config and returns the new one, or null to change nothing) and insert the result
+     * before the lock is released, so edits are serialised and none starves. A plain {@link #write} of a config built from an earlier read silently
+     * drops whatever was written in between, for example a failover that was just recorded -- every writer that edits one part of the config
+     * should come through here. {@code change} runs while the lock is held, so it must be quick and must not write the config itself.
+     *
+     * @return the new version, or empty when {@code change} returned null
+     */
+    public Optional<Long> update(java.util.function.UnaryOperator<WarpConfig> change) throws SQLException {
+        try (Connection conn = com.sayonora.warp.pgwire.PgConnections.open(options)) {
+            conn.setAutoCommit(false);
+            try {
+                try (Statement lock = conn.createStatement()) {
+                    lock.execute("SELECT pg_advisory_xact_lock(7314001)");
+                }
+                WarpConfig current = null;
+                try (Statement st = conn.createStatement();
+                        ResultSet rs = st.executeQuery("SELECT payload::text FROM warp_config ORDER BY version DESC LIMIT 1")) {
+                    if (rs.next()) {
+                        current = decryptSecretFields(WarpConfig.fromJson(rs.getString(1)));
+                    }
+                }
+                WarpConfig next = change.apply(current != null ? current : WarpConfig.fromEnvDefaults());
+                if (next == null) {
+                    conn.rollback();
+                    return Optional.empty();
+                }
+                try (java.sql.PreparedStatement ps = conn.prepareStatement("INSERT INTO warp_config (payload) VALUES (?::jsonb) RETURNING version")) {
+                    ps.setString(1, encryptSecretFields(next).toJson());
+                    try (ResultSet rs = ps.executeQuery()) {
+                        rs.next();
+                        long version = rs.getLong(1);
+                        conn.commit();
+                        return Optional.of(version);
+                    }
+                }
+            } catch (SQLException | RuntimeException e) {
+                conn.rollback();
+                throw e;
+            }
+        }
+    }
+
     public Optional<Version> readLatest() throws SQLException {
         return readLatest(true);
     }

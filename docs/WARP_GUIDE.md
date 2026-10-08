@@ -498,6 +498,17 @@ qualifier needed anywhere), and the router picks the real fastest path per state
   the hash-to-slots conversion and the automatic balancer filling a new empty shard passed on both as well, as on Postgres and MySQL. Each engine's shards were three databases (SQL Server)
   or three users (Oracle) of one container, written through Warp's Postgres front end. Not run with a deliberately failing copy, with several instances on SQL Server or Oracle, or on
   shards that are separate servers of those engines.
+- **Rebalancing next to replicas and failover.** A move refuses to start unless every shard involved has a primary that accepts writes (a failover may be in progress),
+  and refuses to switch the map if any involved shard's primary changed while it ran (it undoes the copy; retry). Reads served by replicas must not see the table
+  half-moved, so before the map switches the move waits until every replica of the target shard has applied the published rows, and before scatter reads are released it waits
+  for every replica of each source shard to apply the cleanup (each by comparing log positions, `WARP_REBALANCE_REPLICA_WAIT_SECONDS`, default 120). A replica that is
+  too slow fails the move before the switch, or after it is taken out of read routing for a while with a warning; an engine that cannot report a log position gets a fixed pause. Writes
+  to the moving slots stay held while it waits, so a lagging replica lengthens the hold. An operator `switchover` requested in the same process while slots are moving is refused.
+  Writing the new map goes through `ConfigStore.update`, a read-modify-write under a database advisory lock: the plain read-then-write that other admin endpoints still use drops
+  edits made in between (measured: 8 threads x 12 edits kept 18 to 21 of 96), which for a failover recorded at the same moment would have repointed a backend at its old primary. The
+  failover persister now uses it too. Live (Postgres, three shards each with a replica, readers served by the replicas, the target's replica held back for 6 s): the move took 6.1 s because
+  it waited; 2,446 keyed and scatter reads, 2,758 of them served by replicas, were all correct; without the wait the same run returned empty results for moved keys. Not run: a failover
+  during a move, or replicas on MySQL, SQL Server or Oracle (positions are unit-level for those engines).
 - **Automatic rebalancing (`WARP_AUTO_REBALANCE=true`, off by default).** On one instance at a time (a lease in the control plane), every
   `WARP_AUTO_REBALANCE_INTERVAL_SECONDS` (300) the balancer counts the rows of each slot table on every shard of its group (empty members included). When the gap
   between the fullest and the emptiest shard exceeds `WARP_AUTO_REBALANCE_THRESHOLD` (0.2) times the mean, it moves slots from the fullest to the emptiest through the same
