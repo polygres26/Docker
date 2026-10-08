@@ -937,6 +937,7 @@ public final class MetricsServer {
                                 out.addProperty("rowsCopied", result.rowsCopied());
                                 out.addProperty("rowsRemovedFromSources", result.rowsRemovedFromSources());
                                 out.addProperty("writesHeldMillis", result.writesHeldMillis());
+                                out.addProperty("scatterReadsHeldMillis", result.scatterReadsHeldMillis());
                                 if (result.warning() != null) {
                                     out.addProperty("warning", result.warning());
                                 }

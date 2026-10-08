@@ -485,11 +485,13 @@ qualifier needed anywhere), and the router picks the real fastest path per state
   Warp instances are live** (`allowOtherInstances` overrides that). It copies with JDBC `getObject`/`setObject` (LOBs as bytes or text), so identity/generated columns that refuse explicit values and exotic types are not
   supported; the shard key must render as the same text the router sees (integers, strings); the keys of the moving rows are held in memory; each source is
   scanned in full (there is no index on the slot), so writes to the moving slots wait for roughly the time of two scans of the source table; a transaction
-  that wrote to the table before the freeze and commits afterwards is caught by the second-scan check, not waited for. When the target already owns slots its copies
-  would be counted next to the originals, so scatter reads of the table also wait during the copy (not when the target is a new, empty member). Live (Postgres and MySQL, 20,000 rows,
+  that wrote to the table before the freeze and commits afterwards is caught by the second-scan check, not waited for. The rows are gathered in a staging table `<table>__rebal` on the target (created with `ddl/<engine>/reshard_staging_create.sql`, dropped afterwards; a leftover from a
+  crash is replaced), which no query reads, and published into the live table with one local `INSERT ... SELECT`, so scatter reads of the table wait only for that publish, the
+  switch and the cleanup of the old copies (`scatterReadsHeldMillis` in the response), not for the copy; writes to the moving slots are still held for the copy and the
+  verification scans (`writesHeldMillis`). The staging table has the columns of the table but none of its keys or indexes (an identity column on SQL Server keeps its property there). Live (Postgres and MySQL, 20,000 rows,
   three writers running throughout, 21 of 64 slots moved to a new third shard and 5 moved on again): no acknowledged write lost or duplicated, none failed,
   every row on the shard that owns its slot, and a scatter `count(*)` of the unchanging rows exact on every one of ~330 checks run throughout; writes to the moving slots were
-  held 44 ms (Postgres) and 305 ms (MySQL). With two Warp instances sharing the control plane and the shards (Postgres), writers and scatter counters through both while
+  held 44 ms (Postgres) and 305 ms (MySQL); on the second move, whose target already owned slots, scatter reads waited 15 ms (Postgres) and 27 ms (MySQL) against writes held 53 ms and 205 ms. With two Warp instances sharing the control plane and the shards (Postgres), writers and scatter counters through both while
   21 slots moved and 5 moved on again from the other instance: 12,137 acknowledged writes, none lost, duplicated or failed, every scatter count exact; with one instance
   paused the move was abandoned after the acknowledgement timeout, nothing moved and no write was lost. Not run on SQL Server or Oracle (the copy uses plain JDBC, not
   engine features), or with a deliberately failing copy.

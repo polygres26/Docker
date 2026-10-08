@@ -60,7 +60,7 @@ public final class SlotRebalancer {
     }
 
     public record Result(String table, String to, int slotsMoved, long rowsCopied, long rowsRemovedFromSources, long writesHeldMillis,
-            String newParams, String warning) {
+            String newParams, String warning, long scatterReadsHeldMillis) {
     }
 
     private final BackendRegistry registry;
@@ -237,6 +237,8 @@ public final class SlotRebalancer {
         long frozenAt = 0;
         boolean flipped = false;
         boolean held = false;
+        boolean staged = false;
+        long scatterBlockedAt = 0;
         long copied = 0;
         var lease = keepAlive(table);
         try {
@@ -246,22 +248,24 @@ public final class SlotRebalancer {
                 store.apply(replaceEntry(store.tableShards(), table, keyColumn, before.withSpare(plan.to()).toParams()));
                 before = before.withSpare(plan.to());
             }
-            // The target already owning slots means scatter queries read it, and its copies of the moving rows would be counted twice next to the
-            // originals: scatter reads of this table then wait from the freeze until the old copies are gone.
             held = true;
-            phase(ReshardCoordinator.Phase.FREEZE, table, moving, before.owners().contains(plan.to()), 0);
+            // Writes to the moving slots are held for the copy. Scatter reads are not: the rows are gathered in a staging table that no query reads, and
+            // only the publish into the live table, the switch and the cleanup of the old copies keep scatter reads waiting.
+            phase(ReshardCoordinator.Phase.FREEZE, table, moving, false, 0);
             frozenAt = System.currentTimeMillis();
             purgeUnowned(target, plan.to(), table, keyColumn, before); // leftovers of an earlier failed attempt
+            createStaging(target, table);
+            staged = true;
             Map<String, long[]> firstScan = new LinkedHashMap<>();
             for (Map.Entry<String, List<Integer>> e : plan.slotsBySource().entrySet()) {
                 BackendTarget source = registry.resolveForRouting(e.getKey());
-                long[] r = copy(source, target, table, keyColumn, before, new HashSet<>(e.getValue()));
+                long[] r = copy(source, target, table, stagingName(table), keyColumn, before, new HashSet<>(e.getValue()));
                 firstScan.put(e.getKey(), r);
                 copied += r[0];
             }
-            long onTarget = countOnTarget(target, table, keyColumn, before, moving);
-            if (onTarget != copied) {
-                throw new IllegalStateException("verification failed: copied " + copied + " rows but the target holds " + onTarget + " rows of the moved slots");
+            long inStaging = countStaging(target, table);
+            if (inStaging != copied) {
+                throw new IllegalStateException("verification failed: copied " + copied + " rows but the staging table holds " + inStaging);
             }
             for (Map.Entry<String, List<Integer>> e : plan.slotsBySource().entrySet()) {
                 long[] again = checksum(registry.resolveForRouting(e.getKey()), table, keyColumn, before, new HashSet<>(e.getValue()));
@@ -272,6 +276,14 @@ public final class SlotRebalancer {
                 }
             }
             phase(ReshardCoordinator.Phase.SCATTER, table, moving, true, 0);
+            scatterBlockedAt = System.currentTimeMillis();
+            publishStaging(target, table);
+            long onTarget = countOnTarget(target, table, keyColumn, before, moving);
+            if (onTarget != copied) {
+                throw new IllegalStateException("verification failed: copied " + copied + " rows but the target holds " + onTarget + " rows of the moved slots");
+            }
+            dropStaging(target, table);
+            staged = false;
             long version = store.apply(replaceEntry(store.tableShards(), table, keyColumn, after.toParams()));
             flipped = true;
             phase(ReshardCoordinator.Phase.FLIP, table, moving, true, version);
@@ -289,8 +301,12 @@ public final class SlotRebalancer {
             }
             log.warn("rebalance of {}: moved {} slots to {} ({} rows copied, {} removed from the sources, writes to the moving slots held {} ms)", table,
                     moving.size(), plan.to(), copied, removed, heldMillis);
-            return new Result(table, plan.to(), moving.size(), copied, removed, heldMillis, plan.newParams(), warning);
+            return new Result(table, plan.to(), moving.size(), copied, removed, heldMillis, plan.newParams(), warning,
+                    System.currentTimeMillis() - scatterBlockedAt);
         } catch (Exception e) {
+            if (staged) {
+                dropStaging(target, table);
+            }
             if (!flipped) {
                 try {
                     purgeUnowned(target, plan.to(), table, keyColumn, before);
@@ -484,7 +500,8 @@ public final class SlotRebalancer {
     }
 
     /** Copies the rows of {@code slots} from {@code source} to {@code target}; returns {rows, checksum}. */
-    private long[] copy(BackendTarget source, BackendTarget target, String table, String keyColumn, ShardingStrategy.SlotStrategy map, Set<Integer> slots)
+    private long[] copy(BackendTarget source, BackendTarget target, String table, String destTable, String keyColumn, ShardingStrategy.SlotStrategy map,
+            Set<Integer> slots)
             throws SQLException {
         long rows = 0;
         long sum = 0;
@@ -499,7 +516,7 @@ public final class SlotRebalancer {
                 cols.append(i == 1 ? "" : ", ").append(md.getColumnLabel(i));
                 marks.append(i == 1 ? "?" : ", ?");
             }
-            try (PreparedStatement ps = out.prepareStatement("INSERT INTO " + table + " (" + cols + ") VALUES (" + marks + ")")) {
+            try (PreparedStatement ps = out.prepareStatement("INSERT INTO " + destTable + " (" + cols + ") VALUES (" + marks + ")")) {
                 int pending = 0;
                 while (rs.next()) {
                     Object k = rs.getObject(key);
@@ -531,6 +548,56 @@ public final class SlotRebalancer {
             in.rollback();
         }
         return new long[] {rows, sum};
+    }
+
+    private static String stagingName(String table) {
+        return table + "__rebal";
+    }
+
+    private static void createStaging(BackendTarget t, String table) throws SQLException {
+        dropStaging(t, table);
+        try (Connection c = t.open(); Statement st = c.createStatement()) {
+            DdlTemplates.runFor(st, t.jdbcUrl(), "reshard_staging_create", Map.of("table", table, "staging", stagingName(table)));
+        }
+    }
+
+    /** Drops the staging table if there is one; an engine error for a table that does not exist is the normal case and is ignored. */
+    private static void dropStaging(BackendTarget t, String table) {
+        try (Connection c = t.open(); Statement st = c.createStatement()) {
+            DdlTemplates.runFor(st, t.jdbcUrl(), "reshard_staging_drop", Map.of("staging", stagingName(table)));
+        } catch (SQLException ignored) {
+            // not there
+        }
+    }
+
+    private static long countStaging(BackendTarget t, String table) throws SQLException {
+        try (Connection c = t.open(); Statement st = c.createStatement(); ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM " + stagingName(table))) {
+            rs.next();
+            return rs.getLong(1);
+        }
+    }
+
+    /** Publishes the staged rows into the live table in one local transaction; returns how many rows went in. */
+    private static long publishStaging(BackendTarget t, String table) throws SQLException {
+        String cols;
+        try (Connection c = t.open(); Statement st = c.createStatement(); ResultSet rs = st.executeQuery("SELECT * FROM " + table + " WHERE 1 = 0")) {
+            ResultSetMetaData md = rs.getMetaData();
+            StringBuilder b = new StringBuilder();
+            for (int i = 1; i <= md.getColumnCount(); i++) {
+                b.append(i == 1 ? "" : ", ").append(md.getColumnLabel(i));
+            }
+            cols = b.toString();
+        }
+        try (Connection c = t.openManualCommit(); Statement st = c.createStatement()) {
+            try {
+                int n = st.executeUpdate("INSERT INTO " + table + " (" + cols + ") SELECT " + cols + " FROM " + stagingName(table));
+                c.commit();
+                return n;
+            } catch (SQLException e) {
+                c.rollback();
+                throw e;
+            }
+        }
     }
 
     /** {rows, checksum} of the rows of {@code slots} currently on {@code source}. */
