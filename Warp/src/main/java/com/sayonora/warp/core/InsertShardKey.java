@@ -27,7 +27,19 @@ final class InsertShardKey {
     }
 
     /** One shard-key value per inserted row, in row order. */
-    record Routed(List<String> keyValues) implements Result {
+    record Routed(List<String> keyValues, Split split) implements Result {
+        Routed(List<String> keyValues) {
+            this(keyValues, null);
+        }
+    }
+
+    /**
+     * What is needed to cut a multi-row INSERT into one INSERT per shard: the text up to and including {@code VALUES}, each row's text
+     * with its parentheses, where each row's {@code ?} binds start and how many it has, and whatever follows the last row (for example
+     * {@code ON CONFLICT ...}). Present only when every bind is a positional {@code ?} and the trailing text has no bind and no
+     * {@code RETURNING}/{@code OUTPUT}, because only then can the rows and their binds be regrouped without renumbering or merging results.
+     */
+    record Split(String prefix, List<String> rows, List<Integer> bindStart, List<Integer> bindCount, String suffix) {
     }
 
     record Unroutable(String reason) implements Result {
@@ -78,12 +90,19 @@ final class InsertShardKey {
             return new Unroutable("the column list does not include the shard key " + column);
         }
         List<String> values = new ArrayList<>();
+        String prefix = s.text().substring(0, s.position());
+        List<String> rowTexts = new ArrayList<>();
+        List<Integer> bindStarts = new ArrayList<>();
+        List<Integer> bindCounts = new ArrayList<>();
+        int lastRowEnd = 0;
         int placeholders = 0; // '?' seen so far in the statement, outside literals and comments
         while (true) {
             s.skipBlank();
             if (s.peek() != '(') {
                 return new Unroutable("expected a row of values");
             }
+            int rowStart = s.position();
+            int rowBindsBefore = placeholders;
             List<String> row = s.valueRow();
             if (row == null) {
                 return new Unroutable("a row of values could not be read");
@@ -103,6 +122,10 @@ final class InsertShardKey {
                     values.add((String) decoded[0]);
                 }
             }
+            lastRowEnd = s.position();
+            rowTexts.add(s.text().substring(rowStart, lastRowEnd));
+            bindStarts.add(rowBindsBefore);
+            bindCounts.add(placeholders - rowBindsBefore);
             s.skipBlank();
             if (s.peek() == ',') {
                 s.next();
@@ -110,7 +133,33 @@ final class InsertShardKey {
             }
             break;
         }
-        return new Routed(values);
+        String suffix = s.text().substring(lastRowEnd);
+        Split split = null;
+        String literalFree = withoutLiterals(sql);
+        if (!NON_POSITIONAL_BIND.matcher(literalFree).find() && countPlaceholders(suffix) == 0
+                && !RETURNING.matcher(withoutLiterals(suffix)).find()) {
+            split = new Split(prefix, rowTexts, bindStarts, bindCounts, suffix);
+        }
+        return new Routed(values, split);
+    }
+
+    private static final java.util.regex.Pattern NON_POSITIONAL_BIND =
+            java.util.regex.Pattern.compile("\\$\\d+|(?<![:\\w]):[A-Za-z_0-9]+|@\\w+");
+    private static final java.util.regex.Pattern RETURNING = java.util.regex.Pattern.compile("(?i)\\b(RETURNING|OUTPUT)\\b");
+
+    /** The text with every single-quoted literal replaced by an empty literal, so patterns do not match inside strings. */
+    private static String withoutLiterals(String text) {
+        StringBuilder out = new StringBuilder();
+        Scanner sc = new Scanner(text);
+        while (sc.hasMore()) {
+            if (sc.peek() == '\'') {
+                sc.skipString();
+                out.append("''");
+            } else {
+                out.append(sc.next());
+            }
+        }
+        return out.toString();
     }
 
     private static String lastPart(String name) {
@@ -221,6 +270,14 @@ final class InsertShardKey {
 
         Scanner(String text) {
             this.t = text;
+        }
+
+        String text() {
+            return t;
+        }
+
+        int position() {
+            return p;
         }
 
         boolean hasMore() {

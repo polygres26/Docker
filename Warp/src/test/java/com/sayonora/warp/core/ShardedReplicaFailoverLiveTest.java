@@ -280,12 +280,54 @@ class ShardedReplicaFailoverLiveTest {
                         () -> st.executeUpdate("update orders set customer_id = 5 where id = 1"));
                 assertTrue(refused.getMessage().contains("cannot UPDATE the shard key"), refused.getMessage());
             }
+            // 1c. a multi-row INSERT whose rows belong to different shards is cut per shard and lands atomically
+            long beforeRows = count(p1) + count(p2);
+            long beforeP1 = count(p1);
+            try (Connection c = DriverManager.getConnection(url, "warp", "secret"); Statement st = c.createStatement()) {
+                StringBuilder values = new StringBuilder();
+                for (int i = 0; i < 20; i++) {
+                    values.append(i == 0 ? "" : ", ").append("(").append(7000 + i).append(", ").append(7000 + i).append(", 1)");
+                }
+                assertEquals(20, st.executeUpdate("insert into orders (id, customer_id, amount) values " + values), "one statement, 20 rows, two shards");
+                assertEquals(beforeRows + 20, count(p1) + count(p2));
+                assertTrue(count(p1) > beforeP1 && count(p2) > beforeRows - beforeP1, "both shards received part of it");
+                for (int i = 0; i < 20; i++) {
+                    try (ResultSet rs = st.executeQuery("select count(*) from orders where customer_id = " + (7000 + i))) {
+                        rs.next();
+                        assertEquals(1, rs.getInt(1), "a keyed read finds the row on the shard it was routed to");
+                    }
+                }
+                try (java.sql.PreparedStatement ps = c.prepareStatement("insert into orders (id, customer_id, amount) values (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?)")) {
+                    int n = 1;
+                    for (int i = 0; i < 4; i++) {
+                        ps.setInt(n++, 7100 + i);
+                        ps.setInt(n++, 7100 + i);
+                        ps.setInt(n++, 5);
+                    }
+                    assertEquals(4, ps.executeUpdate(), "the same with bind parameters");
+                }
+                assertEquals(24, st.executeUpdate("delete from orders where id >= 7000"), "cleanup, broadcast");
+                assertEquals(beforeRows, count(p1) + count(p2));
+            }
+            // 1d. atomic: a row that fails on one shard rolls back what the other shard already accepted
+            try (Connection c = DriverManager.getConnection(url, "warp", "secret"); Statement st = c.createStatement()) {
+                var dup = org.junit.jupiter.api.Assertions.assertThrows(java.sql.SQLException.class, () -> st.executeUpdate(
+                        "insert into orders (id, customer_id, amount) values (8001, 8001, 1), (1, 1, 1), (8002, 8002, 1), (8003, 8003, 1), (8004, 8004, 1)"));
+                System.out.println("SHARDED-NOTE " + engine + " duplicate key on one shard: " + dup.getMessage().replaceAll("\\s+", " "));
+                assertEquals(beforeRows, count(p1) + count(p2), "no shard kept its part of the failed statement");
+            }
+            // 1e. inside a client transaction the shards commit or roll back together
             try (Connection c = DriverManager.getConnection(url, "warp", "secret"); Statement st = c.createStatement()) {
                 c.setAutoCommit(false);
-                var refused = org.junit.jupiter.api.Assertions.assertThrows(java.sql.SQLException.class,
-                        () -> st.executeUpdate("delete from orders where amount = -1"));
-                System.out.println("SHARDED-NOTE " + engine + " broadcast inside a transaction: " + refused.getMessage().replaceAll("\\s+", " "));
+                assertEquals(beforeRows, count(p1) + count(p2));
+                assertEquals(beforeRows, st.executeUpdate("update orders set amount = amount + 1000"), "broadcast inside a transaction");
                 c.rollback();
+                assertEquals(0, sumWhere(p1, "amount > 900") + sumWhere(p2, "amount > 900"), "rollback undid it on both shards");
+                assertEquals(beforeRows, st.executeUpdate("update orders set amount = amount + 1000"));
+                c.commit();
+                assertEquals(beforeRows, sumWhere(p1, "amount > 900") + sumWhere(p2, "amount > 900"), "commit applied it on both shards");
+                c.setAutoCommit(true);
+                assertEquals(beforeRows, st.executeUpdate("update orders set amount = amount - 1000"));
             }
 
             // 2. reads, including a scatter-gather aggregate, are served by the shard replicas
@@ -355,13 +397,14 @@ class ShardedReplicaFailoverLiveTest {
                 rs.next();
                 assertEquals(rows, rs.getLong(1), "count through Warp equals what the shards hold");
             }
-            // 6. a broadcast write that fails on one shard after another applied it says so (shard 2 has no usable primary left now)
+            // 6. a broadcast write while one shard has no usable primary changes nothing on the other shard either (shard 2 is down now)
+            long shard1Sum = sumAmount(r1);
             r2.crash();
             try (Connection c = DriverManager.getConnection(url, "warp", "secret"); Statement st = c.createStatement()) {
-                var partial = org.junit.jupiter.api.Assertions.assertThrows(java.sql.SQLException.class,
-                        () -> st.executeUpdate("update orders set amount = amount"));
-                System.out.println("SHARDED-NOTE " + engine + " partial broadcast failure: " + partial.getMessage().replaceAll("\\s+", " "));
-                assertTrue(partial.getMessage().contains("had already applied this statement when shard \"s2\" failed"), partial.getMessage());
+                var failed = org.junit.jupiter.api.Assertions.assertThrows(java.sql.SQLException.class,
+                        () -> st.executeUpdate("update orders set amount = amount + 5"));
+                System.out.println("SHARDED-NOTE " + engine + " broadcast with a shard down: " + failed.getMessage().replaceAll("\\s+", " "));
+                assertEquals(shard1Sum, sumAmount(r1), "the shard that was up did not keep the update");
             }
         }
     }

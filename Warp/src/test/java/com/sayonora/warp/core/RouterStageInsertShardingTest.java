@@ -65,9 +65,38 @@ class RouterStageInsertShardingTest {
         }
         assertEquals(one, routed(SourceDialect.POSTGRES, "INSERT INTO orders (id, customer_id) VALUES (1, 1), (2, 1)"));
         final int split = other;
+        // spanning shards is no longer refused: it is cut into one INSERT per shard by the executor
+        assertEquals(RoutingBackendExecutor.SCATTER_ALL,
+                routed(SourceDialect.POSTGRES, "INSERT INTO orders (id, customer_id) VALUES (1, 1), (2, " + split + ")"));
+        assertEquals(RoutingBackendExecutor.SCATTER_ALL,
+                routed(SourceDialect.MYSQL, "INSERT INTO orders (id, customer_id) VALUES (?, ?), (?, ?)", 1, 1, 2, split));
+        // numbered binds cannot be regrouped without renumbering, so those are still refused
         SQLException spans = assertThrows(SQLException.class,
-                () -> routed(SourceDialect.POSTGRES, "INSERT INTO orders (id, customer_id) VALUES (1, 1), (2, " + split + ")"));
+                () -> routed(SourceDialect.POSTGRES, "INSERT INTO orders (id, customer_id) VALUES ($1, $2), ($3, $4)", 1, 1, 2, split));
         assertTrue(spans.getMessage().contains("different shards"), spans.getMessage());
+    }
+
+    @Test
+    void aWriteThatAlsoReadsAnotherShardedTableOrItselfIsRefused() {
+        RouterStage two = RouterStage.fromConfig(null, null, null, null,
+                "orders:hash:customer_id:s1,s2|items:hash:order_id:s1,s2", REGISTRY);
+        for (String sql : new String[] {
+                "UPDATE orders SET amount = 1 FROM items WHERE items.order_id = orders.id",
+                "DELETE FROM orders WHERE id IN (SELECT order_id FROM items)",
+                "UPDATE orders o SET amount = 0 WHERE o.amount > (SELECT max(amount) FROM orders)",
+                "UPDATE orders o JOIN items i ON i.order_id = o.id SET o.amount = 1"}) {
+            SQLException e = assertThrows(SQLException.class, () -> two.handle(new Statement("t", SourceDialect.POSTGRES, sql,
+                    List.of(), "default", null, AccessContext.ANONYMOUS), s -> ExecutionResult.ofUpdate(0)), sql);
+            assertTrue(e.getMessage().contains("also reads sharded table"), e.getMessage());
+        }
+    }
+
+    @Test
+    void aWriteJoiningAnUnshardedReferenceTableIsStillAllowed() throws SQLException {
+        assertEquals(RoutingBackendExecutor.SCATTER_ALL, routed(SourceDialect.POSTGRES,
+                "UPDATE orders SET amount = r.rate FROM rates r WHERE r.id = 1"));
+        assertEquals("s1".equals(routed(SourceDialect.POSTGRES, "SELECT * FROM orders WHERE customer_id = 3")) ? "s1" : "s2",
+                routed(SourceDialect.POSTGRES, "UPDATE orders SET amount = r.rate FROM rates r WHERE customer_id = 3"));
     }
 
     @Test

@@ -483,6 +483,10 @@ public final class RouterStage implements PipelineStage {
                     log.debug("router: INSERT into sharded table {} ({}) routed to {}", rule.tableName(), rule.column(), owner);
                     return owner;
                 }
+                if (routed.split() != null) {
+                    log.debug("router: INSERT into sharded table {} spans {} shards -> split per shard", rule.tableName(), owners.size());
+                    return RoutingBackendExecutor.SCATTER_ALL;
+                }
                 throw ErrorCatalog.sqlException("ERR_SHARD_INSERT_SPANS_SHARDS", rule.tableName(), owners.size(), String.join(", ", owners));
             }
             if (insert instanceof InsertShardKey.Unroutable unroutable) {
@@ -491,6 +495,9 @@ public final class RouterStage implements PipelineStage {
             // UPDATE / DELETE: a plain conjunction with key = value goes to the one shard that owns it; anything that cannot be proven to
             // touch one shard runs on all of them (RoutingBackendExecutor#executeScatterGather); assigning the key itself is refused.
             WriteShardKey.Result write = WriteShardKey.analyze(statement.sqlText(), rule.tableName(), rule.column(), statement.bindParams());
+            if (!(write instanceof WriteShardKey.NotApplicable)) {
+                refuseCrossShardWriteReads(statement.sqlText(), rule);
+            }
             if (write instanceof WriteShardKey.Keyed keyed) {
                 String owner = rule.strategy().resolve(keyed.keyValue());
                 return owner != null ? owner : RoutingBackendExecutor.SCATTER_ALL;
@@ -533,6 +540,35 @@ public final class RouterStage implements PipelineStage {
             }
         }
         return resolveUnambiguousDefault(statement);
+    }
+
+    /**
+     * An UPDATE or DELETE runs on each shard on its own, so everything it reads (a join, {@code FROM}/{@code USING}, a subquery) is read
+     * from that one shard. That is wrong when it reads another sharded table, or the same one a second time, because the rows it needs may
+     * sit on a different shard. Other tables are assumed to be present in full on every shard (reference data), as they always had to be.
+     */
+    private void refuseCrossShardWriteReads(String sql, TableShardRule rule) throws SQLException {
+        for (TableShardRule other : tableShardRules) {
+            if (other != rule && relationMentions(sql, other.tableName()) > 0) {
+                throw ErrorCatalog.sqlException("ERR_SHARD_WRITE_READS_SHARDED", rule.tableName(), other.tableName());
+            }
+        }
+        // the write's own target is one mention; a second one is a self-join or a subquery over the same table
+        if (relationMentions(sql, rule.tableName()) > 1) {
+            throw ErrorCatalog.sqlException("ERR_SHARD_WRITE_READS_SHARDED", rule.tableName(), rule.tableName());
+        }
+    }
+
+    /** How many times {@code table} appears where a relation is named: after UPDATE, FROM, JOIN, USING or a comma in a FROM list. */
+    private static int relationMentions(String sql, String table) {
+        String bare = table.contains(".") ? table.substring(table.lastIndexOf('.') + 1) : table;
+        java.util.regex.Matcher m = Pattern.compile("(?i)(?:\\b(?:FROM|JOIN|USING|UPDATE)|,)\\s+(?:[\\w$]+\\.)*[\"`\\[]?"
+                + Pattern.quote(bare) + "\\b").matcher(sql);
+        int n = 0;
+        while (m.find()) {
+            n++;
+        }
+        return n;
     }
 
     /** No rule matched -- fall back in two steps, neither of which needs the caller (a protocol's
