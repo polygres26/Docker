@@ -111,6 +111,18 @@ public final class PgReshardCoordination implements ReshardCoordinator {
     }
 
     @Override
+    public List<String> abandonedHolds() throws SQLException {
+        List<String> tables = new ArrayList<>();
+        try (Connection c = PgConnections.open(options); Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery("SELECT table_name FROM warp_reshard_gate WHERE phase <> 'OPEN' AND lease_until < now()")) {
+            while (rs.next()) {
+                tables.add(rs.getString(1));
+            }
+        }
+        return tables;
+    }
+
+    @Override
     public void awaitAcks(String table, long epoch, long timeoutMillis) throws SQLException {
         long deadline = System.currentTimeMillis() + timeoutMillis;
         List<String> missing;
