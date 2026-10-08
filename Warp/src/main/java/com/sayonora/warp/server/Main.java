@@ -202,6 +202,24 @@ public final class Main {
         // Lag sampling for read replicas configured on any backend (5th WARP_BACKENDS field); a no-op
         // loop when none are configured, and disabled by WARP_REPLICA_LAG_CHECK_SECONDS=0.
         backendRegistry.replicaRouter().start();
+        // Reader endpoints for the raw-byte relay modes, which cannot route per statement: a port whose connections go to a replica.
+        for (Object[] relay : new Object[][] {{"oracle", "WARP_ORACLE_RELAY", 1521}, {"mysql", "WARP_MYWIRE_RELAY", 3306},
+                {"mssql", "WARP_MSSQLWIRE_RELAY", 1433}}) {
+            String readPort = System.getenv(relay[1] + "_READ_PORT");
+            String readBackend = System.getenv(relay[1] + "_BACKEND");
+            if (readPort == null || readPort.isBlank()) {
+                continue;
+            }
+            try {
+                if (readBackend == null || readBackend.isBlank()) {
+                    throw new IllegalArgumentException(relay[1] + "_BACKEND must name the backend whose replicas serve the reader port");
+                }
+                new com.sayonora.warp.core.RelayReaderEndpoint((String) relay[0], Integer.parseInt(readPort.trim()), readBackend.trim(),
+                        backendRegistry, (Integer) relay[2], !"refuse".equalsIgnoreCase(System.getenv("WARP_RELAY_READER_FALLBACK"))).start();
+            } catch (Exception e) {
+                log.error("relay reader endpoint for {} not started: {}", relay[0], e.toString());
+            }
+        }
 
         // Closes the gap flagged by a competitive comparison against ShardingSphere: a coordinator
         // crash between an XA transaction's commit decision and every branch actually applying it
