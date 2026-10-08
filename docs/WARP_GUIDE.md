@@ -520,6 +520,13 @@ qualifier needed anywhere), and the router picks the real fastest path per state
   left the table consistent (every row on the shard that owns its slot, no staging table, no row missing or doubled) on Postgres, the throw cases at once and the halted ones
   about 30 s after the kill with a restarted instance doing the repair, and the table could be moved again afterwards; MySQL passed a throw and two halts, and SQL Server and Oracle the
   halt after the publish. Not run: a kill together with a shard failover, or several instances racing to recover (the hold compare-and-set decides, as for two movers).
+- **A shard's primary dying during a move (live, Postgres, each shard with a replica in promote mode).** Warp stands still at a chosen point (`WARP_FAULT_MODE=sleep`),
+  the primary of a shard is killed, Warp promotes its replica, and the move carries on. Killing a source's primary before the switch: the move stops with "the primary of a shard involved
+  changed during the move; nothing was switched" and the table is consistent 34 s after the kill. Killing the target's primary just after the publish: the move fails on the dead node, cannot clean up
+  there, so it leaves its hold to lapse; the recovery loop then reconciles the promoted node (drops the staging table, removes the stray copies) and the table is consistent 50 s after the kill. Killing
+  a source's primary right after the switch: the cleanup runs on the promoted node and the move completes (34 s). In all three the table could be moved again afterwards. Making these pass fixed three
+  things: replicas that can no longer report a position (the old primary now listed as a replica, or a promoted node) are no longer waited on for 120 s; a cleanup that cannot reach a node, including a
+  connection pool that will not start, now leaves the hold for the recovery loop instead of releasing it; and a `reconcile` or `purge` that fails keeps its hold so it is retried. Not run on MySQL, SQL Server or Oracle.
 - **Automatic rebalancing (`WARP_AUTO_REBALANCE=true`, off by default).** On one instance at a time (a lease in the control plane), every
   `WARP_AUTO_REBALANCE_INTERVAL_SECONDS` (300) the balancer counts the rows of each slot table on every shard of its group (empty members included). When the gap
   between the fullest and the emptiest shard exceeds `WARP_AUTO_REBALANCE_THRESHOLD` (0.2) times the mean, it moves slots from the fullest to the emptiest through the same

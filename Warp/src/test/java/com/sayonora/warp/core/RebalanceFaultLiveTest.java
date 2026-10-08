@@ -129,9 +129,13 @@ class RebalanceFaultLiveTest {
                     assertTrue(problem != null, "after the switch the old copies are still there until they are reconciled");
                     w.close(); // the same fault would fire again inside this instance's reconcile
                     w = warp(cfg, cluster, null, null);
-                    String fixed = BrownoutHarness.http("POST", "http://localhost:" + w.metricsPort() + "/api/sharding/reconcile", "{\"table\":\"orders\"}");
-                    assertTrue(fixed.contains("rowsRemoved"), fixed);
-                    problem = inconsistency(w, cluster, expected);
+                    // the failed move left its hold for the recovery loop, so a manual reconcile is refused until that lapses; either way the table gets repaired
+                    long until = System.currentTimeMillis() + 90_000;
+                    while (problem != null && System.currentTimeMillis() < until) {
+                        BrownoutHarness.http("POST", "http://localhost:" + w.metricsPort() + "/api/sharding/reconcile", "{\"table\":\"orders\"}");
+                        Thread.sleep(3000);
+                        problem = inconsistency(w, cluster, expected);
+                    }
                 }
                 assertEquals(null, problem, "consistent after " + point);
             }

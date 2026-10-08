@@ -238,6 +238,7 @@ public final class SlotRebalancer {
         boolean flipped = false;
         boolean held = false;
         boolean staged = false;
+        boolean leaveForRecovery = false;
         long scatterBlockedAt = 0;
         long copied = 0;
         var lease = keepAlive(table);
@@ -288,7 +289,9 @@ public final class SlotRebalancer {
             if (onTarget != copied) {
                 throw new IllegalStateException("verification failed: copied " + copied + " rows but the target holds " + onTarget + " rows of the moved slots");
             }
-            dropStaging(target, table);
+            if (!dropStaging(target, table)) {
+                throw new IllegalStateException("could not drop the staging table on the target; nothing was switched");
+            }
             staged = false;
             awaitReplicasApplied(plan.to(), true); // reads routed to the target's replicas must find the rows before the map says they live there
             FaultPoints.hit("before-switch");
@@ -308,7 +311,10 @@ public final class SlotRebalancer {
                 }
             } catch (Exception e) {
                 warning = "the slots moved, but removing the old copies failed (" + e.getMessage() + "); rows of the moved slots are duplicated on "
-                        + plan.slotsBySource().keySet() + " until POST /api/sharding/purge {table, shard} finishes the job";
+                        + plan.slotsBySource().keySet() + " until "
+                        + (coordinator != null ? "the recovery loop reconciles them (within about a minute) or POST /api/sharding/reconcile {table} does"
+                                : "POST /api/sharding/purge {table, shard} finishes the job");
+                leaveForRecovery = coordinator != null;
                 log.error("rebalance of {}: {}", table, warning);
             }
             for (String source : plan.slotsBySource().keySet()) {
@@ -319,19 +325,20 @@ public final class SlotRebalancer {
             return new Result(table, plan.to(), moving.size(), copied, removed, heldMillis, plan.newParams(), warning,
                     System.currentTimeMillis() - scatterBlockedAt);
         } catch (Exception e) {
-            if (staged) {
-                dropStaging(target, table);
+            if (staged && !dropStaging(target, table)) {
+                leaveForRecovery = coordinator != null; // the staging table is still there: let the hold lapse so the recovery loop reconciles
             }
             if (!flipped) {
                 try {
                     purgeUnowned(target, plan.to(), table, keyColumn, before);
                 } catch (Exception cleanup) {
                     log.error("rebalance of {}: cleaning up the target after a failure also failed: {}", table, cleanup.toString());
+                    leaveForRecovery = coordinator != null; // copies may be left on the target: let the hold lapse so the recovery loop reconciles
                 }
             }
             throw e;
         } finally {
-            if (held) {
+            if (held && !leaveForRecovery) {
                 try {
                     if (coordinator != null) {
                         coordinator.publish(table, ReshardCoordinator.Phase.OPEN, List.of(), false, 0);
@@ -363,20 +370,26 @@ public final class SlotRebalancer {
         }
         var lease = keepAlive(rule.tableName());
         boolean held = false;
+        boolean done = false;
         try {
             held = true;
             phase(ReshardCoordinator.Phase.SCATTER, rule.tableName(), List.of(), true, 0);
             long removed = 0;
             for (String shard : s.slotCounts().keySet()) {
                 BackendTarget t = registry.resolveForRouting(shard);
-                dropStaging(t, rule.tableName());
+                if (!dropStaging(t, rule.tableName())) {
+                    throw new IllegalStateException("could not drop the staging table on shard '" + shard + "'; it stays held and will be retried");
+                }
                 removed += purgeUnowned(t, shard, rule.tableName(), rule.column(), s);
                 awaitReplicasApplied(shard, false);
             }
             log.warn("reconcile of {}: removed {} rows that did not belong on the shard holding them", rule.tableName(), removed);
+            done = true;
             return removed;
         } finally {
-            if (held) {
+            // A reconcile that failed (a shard still unreachable, say) keeps the hold, which then lapses and is picked up again: releasing it would
+            // leave the stray rows with nobody responsible for them.
+            if (held && (done || coordinator == null)) {
                 try {
                     if (coordinator != null) {
                         coordinator.publish(rule.tableName(), ReshardCoordinator.Phase.OPEN, List.of(), false, 0);
@@ -430,14 +443,16 @@ public final class SlotRebalancer {
         }
         var lease = keepAlive(rule.tableName());
         boolean held = false;
+        boolean done = false;
         try {
             held = true;
             phase(ReshardCoordinator.Phase.SCATTER, rule.tableName(), List.of(), true, 0);
             long removed = purgeUnowned(t, shard, rule.tableName(), rule.column(), s);
             awaitReplicasApplied(shard, false);
+            done = true;
             return removed;
         } finally {
-            if (held) {
+            if (held && (done || coordinator == null)) {
                 try {
                     if (coordinator != null) {
                         coordinator.publish(rule.tableName(), ReshardCoordinator.Phase.OPEN, List.of(), false, 0);
@@ -697,9 +712,16 @@ public final class SlotRebalancer {
                 try {
                     applied = ha.appliedPosition(replica.target());
                 } catch (Exception e) {
-                    applied = java.util.Optional.empty(); // a replica that cannot be asked is not serving reads either
+                    applied = java.util.Optional.empty();
                 }
-                if (applied.isPresent() && applied.get().compareTo(mark.get()) >= 0) {
+                if (applied.isEmpty()) {
+                    // a node that cannot report an applied position is not serving reads as a replica: it is down, or it was promoted and is the
+                    // primary now (a failover swaps the old primary into the replica list). Nothing to wait for.
+                    log.debug("rebalance: replica {} of shard '{}' reports no applied position; not waiting for it", replica.target().jdbcUrl(), shard);
+                    caughtUp = true;
+                    break;
+                }
+                if (applied.get().compareTo(mark.get()) >= 0) {
                     caughtUp = true;
                     break;
                 }
@@ -728,12 +750,26 @@ public final class SlotRebalancer {
         }
     }
 
-    /** Drops the staging table if there is one; an engine error for a table that does not exist is the normal case and is ignored. */
-    private static void dropStaging(BackendTarget t, String table) {
+    /**
+     * Drops the staging table if there is one. A table that is not there is the normal case; a node that cannot be reached is not, and the caller
+     * is told (false) so that it can leave the clean-up to the recovery loop. A pool that cannot start throws an unchecked exception, hence the broad catch.
+     *
+     * @return true when the table is gone or was never there
+     */
+    private static boolean dropStaging(BackendTarget t, String table) {
         try (Connection c = t.open(); Statement st = c.createStatement()) {
             DdlTemplates.runFor(st, t.jdbcUrl(), "reshard_staging_drop", Map.of("staging", stagingName(table)));
-        } catch (SQLException ignored) {
-            // not there
+            return true;
+        } catch (SQLException e) {
+            String state = e.getSQLState();
+            boolean missing = "42P01".equals(state) || "42S02".equals(state) || e.getErrorCode() == 942 || e.getErrorCode() == 3701 || e.getErrorCode() == 1051;
+            if (!missing) {
+                log.warn("rebalance: could not drop the staging table of {} on {}: {}", table, BackendSetModel.maskUrl(t.jdbcUrl()), e.toString());
+            }
+            return missing;
+        } catch (RuntimeException e) {
+            log.warn("rebalance: could not drop the staging table of {} on {}: {}", table, BackendSetModel.maskUrl(t.jdbcUrl()), e.toString());
+            return false;
         }
     }
 
