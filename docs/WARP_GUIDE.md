@@ -493,6 +493,16 @@ qualifier needed anywhere), and the router picks the real fastest path per state
   21 slots moved and 5 moved on again from the other instance: 12,137 acknowledged writes, none lost, duplicated or failed, every scatter count exact; with one instance
   paused the move was abandoned after the acknowledgement timeout, nothing moved and no write was lost. Not run on SQL Server or Oracle (the copy uses plain JDBC, not
   engine features), or with a deliberately failing copy.
+- **Automatic rebalancing (`WARP_AUTO_REBALANCE=true`, off by default).** On one instance at a time (a lease in the control plane), every
+  `WARP_AUTO_REBALANCE_INTERVAL_SECONDS` (300) the balancer counts the rows of each slot table on every shard of its group (empty members included). When the gap
+  between the fullest and the emptiest shard exceeds `WARP_AUTO_REBALANCE_THRESHOLD` (0.2) times the mean, it moves slots from the fullest to the emptiest through the same
+  rebalance as above (same hold, verification and cleanup): about half the gap, at most `WARP_AUTO_REBALANCE_MAX_SLOTS_PER_RUN` (32) slots, one move per pass, then
+  `WARP_AUTO_REBALANCE_COOLDOWN_SECONDS` (60) of rest. It moves only when that strictly narrows the gap, so a single huge key (a slot cannot be split) is never bounced
+  back and forth. `WARP_AUTO_REBALANCE_TABLES` limits it to named tables and `WARP_AUTO_REBALANCE_WINDOW=01:00-05:00` to a time window (it may cross midnight);
+  `POST /api/sharding/balancer {"enabled":false}` pauses it at runtime, `POST /api/sharding/balancer/run` runs a pass now, and `GET /api/sharding` shows its last result.
+  **It balances row counts (storage), not query load**, counts rows with `COUNT(*)` and a per-key `GROUP BY` on the fullest shard each time it acts, and a failed move is
+  logged and retried on the next pass. Live (Postgres, 12,000 rows on two shards plus an empty third, two writers running): the third shard filled by itself in passes of
+  up to 12 slots (final 4,699 / 3,920 / 4,354 rows), nothing lost or failed, and it stayed put afterwards; with the threshold above the imbalance, or paused, nothing moved.
 - **Shards and replicas.** Each shard is an ordinary backend, so it can have its own replicas and its own failover mode: a keyed read, and each
   member of a scatter-gather read, can be served by that shard's replica, and a shard whose primary fails over does so on its own while the other
   shards keep serving. Live-verified on Postgres and on MySQL (`ShardedReplicaFailoverLiveTest`): two hash shards each with a replica in `promote`
