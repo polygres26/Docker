@@ -27,6 +27,9 @@ public interface ReshardCoordinator {
     /** Extends the lease of the phase this process published. */
     void renew(String table) throws Exception;
 
+    /** Tables whose hold was never released and whose lease has run out: the mover that took it is gone. */
+    java.util.List<String> abandonedHolds() throws Exception;
+
     /** Waits until every live instance has acknowledged {@code epoch}; throws IllegalStateException naming the ones that have not. */
     void awaitAcks(String table, long epoch, long timeoutMillis) throws Exception;
 }

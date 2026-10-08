@@ -961,6 +961,13 @@ public final class MetricsServer {
                             out.addProperty("map", slotRebalancer.addShard(body.get("table").getAsString(), body.get("shard").getAsString()));
                             response.setStatus(HttpServletResponse.SC_OK);
                             response.getWriter().write(out.toString());
+                        } else if ("/api/sharding/reconcile".equals(target) && "POST".equals(request.getMethod())) {
+                            JsonObject body = com.google.gson.JsonParser.parseString(new String(request.getInputStream().readAllBytes(),
+                                    java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
+                            JsonObject out = new JsonObject();
+                            out.addProperty("rowsRemoved", slotRebalancer.reconcile(body.get("table").getAsString()));
+                            response.setStatus(HttpServletResponse.SC_OK);
+                            response.getWriter().write(out.toString());
                         } else if ("/api/sharding/purge".equals(target) && "POST".equals(request.getMethod())) {
                             JsonObject body = com.google.gson.JsonParser.parseString(new String(request.getInputStream().readAllBytes(),
                                     java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();

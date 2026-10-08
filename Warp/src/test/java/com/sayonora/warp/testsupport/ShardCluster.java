@@ -113,6 +113,15 @@ public final class ShardCluster implements AutoCloseable {
         }
     }
 
+    /** True when the rebalance staging table is still on shard {@code i}. */
+    public boolean stagingExists(int i) throws Exception {
+        try (Connection c = shards[i].conn(); Statement st = c.createStatement(); ResultSet rs = st.executeQuery("select count(*) from orders__rebal")) {
+            return rs.next();
+        } catch (SQLException absent) {
+            return false;
+        }
+    }
+
     public Set<Long> ids(int i) throws Exception {
         Set<Long> out = new HashSet<>();
         try (Connection c = shards[i].conn(); Statement st = c.createStatement(); ResultSet rs = st.executeQuery("select id from orders")) {

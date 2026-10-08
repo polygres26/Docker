@@ -279,9 +279,11 @@ public final class SlotRebalancer {
                             + again[0] + " now); nothing was switched, retry when writes to these slots are quiet");
                 }
             }
+            FaultPoints.hit("after-verify");
             phase(ReshardCoordinator.Phase.SCATTER, table, moving, true, 0);
             scatterBlockedAt = System.currentTimeMillis();
             publishStaging(target, table);
+            FaultPoints.hit("after-publish");
             long onTarget = countOnTarget(target, table, keyColumn, before, moving);
             if (onTarget != copied) {
                 throw new IllegalStateException("verification failed: copied " + copied + " rows but the target holds " + onTarget + " rows of the moved slots");
@@ -289,11 +291,13 @@ public final class SlotRebalancer {
             dropStaging(target, table);
             staged = false;
             awaitReplicasApplied(plan.to(), true); // reads routed to the target's replicas must find the rows before the map says they live there
+            FaultPoints.hit("before-switch");
             if (!primaryUrls(involved).equals(startPrimaries)) {
                 throw new IllegalStateException("the primary of a shard involved changed during the move (a failover); nothing was switched, retry");
             }
             long version = store.apply(replaceEntry(store.tableShards(), table, keyColumn, after.toParams()));
             flipped = true;
+            FaultPoints.hit("after-switch");
             phase(ReshardCoordinator.Phase.FLIP, table, moving, true, version);
             long heldMillis = System.currentTimeMillis() - frozenAt;
             long removed = 0;
@@ -342,6 +346,74 @@ public final class SlotRebalancer {
                 lease.shutdownNow();
             }
             RUNNING.set(false);
+        }
+    }
+
+    /**
+     * Puts a table's shards back in a state that matches its slot map after a move that did not finish (a failed move, a crashed Warp): on every shard
+     * of the group the staging table is dropped and every row the map gives to another shard is deleted. A move that stopped before the switch left
+     * copies on its target; one that stopped after it left the moved rows on its sources; both are exactly "rows on a shard that does not own
+     * them", so this one operation finishes either. Scatter reads of the table wait while it runs. Returns the rows removed.
+     */
+    public long reconcile(String table) throws Exception {
+        RouterStage.TableShardRule rule = rule(table);
+        ShardingStrategy.SlotStrategy s = slotted(rule);
+        if (!RUNNING.compareAndSet(false, true)) {
+            throw new IllegalStateException("another rebalance is already running in this process");
+        }
+        var lease = keepAlive(rule.tableName());
+        boolean held = false;
+        try {
+            held = true;
+            phase(ReshardCoordinator.Phase.SCATTER, rule.tableName(), List.of(), true, 0);
+            long removed = 0;
+            for (String shard : s.slotCounts().keySet()) {
+                BackendTarget t = registry.resolveForRouting(shard);
+                dropStaging(t, rule.tableName());
+                removed += purgeUnowned(t, shard, rule.tableName(), rule.column(), s);
+                awaitReplicasApplied(shard, false);
+            }
+            log.warn("reconcile of {}: removed {} rows that did not belong on the shard holding them", rule.tableName(), removed);
+            return removed;
+        } finally {
+            if (held) {
+                try {
+                    if (coordinator != null) {
+                        coordinator.publish(rule.tableName(), ReshardCoordinator.Phase.OPEN, List.of(), false, 0);
+                    } else {
+                        phase(ReshardCoordinator.Phase.OPEN, rule.tableName(), List.of(), false, 0);
+                    }
+                } catch (Exception releaseFailure) {
+                    log.error("reconcile of {}: releasing the hold failed ({})", rule.tableName(), releaseFailure.toString());
+                }
+            }
+            if (lease != null) {
+                lease.shutdownNow();
+            }
+            RUNNING.set(false);
+        }
+    }
+
+    /**
+     * Finishes moves whose mover is gone: a hold in the control plane that was never released and whose lease has run out belongs to a Warp that
+     * crashed or hung. One instance wins the hold (the same compare-and-set that keeps two movers apart), reconciles the table and releases it.
+     */
+    public void recoverAbandoned() throws Exception {
+        if (coordinator == null) {
+            return;
+        }
+        for (String table : coordinator.abandonedHolds()) {
+            if (RUNNING.get()) {
+                return;
+            }
+            try {
+                log.warn("rebalance of {} was abandoned by its mover (lease expired); reconciling the shards", table);
+                reconcile(table);
+            } catch (IllegalStateException lost) {
+                log.debug("recovery of {} skipped: {}", table, lost.getMessage()); // another instance took it
+            } catch (IllegalArgumentException notSlotted) {
+                coordinator.publish(table, ReshardCoordinator.Phase.OPEN, List.of(), false, 0); // nothing to reconcile: just release
+            }
         }
     }
 
@@ -548,6 +620,9 @@ public final class SlotRebalancer {
                         ps.executeBatch();
                         out.commit();
                         pending = 0;
+                        if (rows == BATCH) {
+                            FaultPoints.hit("copy-mid");
+                        }
                     }
                 }
                 if (pending > 0) {
@@ -574,10 +649,13 @@ public final class SlotRebalancer {
         }
     }
 
-    /** Every shard involved must have a primary that accepts writes now: a move started in the middle of a failover would copy from or to a node about to go. */
+    /** Every shard involved that has replicas (so can fail over) must have a primary that accepts writes now: a move started in the middle of a failover would copy from or to a node about to go. */
     private void requireWritable(Collection<String> shards) {
         for (String shard : shards) {
             BackendTarget t = registry.resolveForRouting(shard);
+            if (registry.replicaSpecsOf(shard).isEmpty()) {
+                continue; // a shard with no replica cannot fail over, and the role probe needs privileges a plain shard user may not have
+            }
             EngineHa ha = t == null ? null : EngineHa.forDialect(t.dialect());
             if (ha != null && ha.role(t) != FailoverMonitor.NodeRole.WRITABLE) {
                 throw new IllegalStateException("the primary of shard '" + shard + "' is not accepting writes (a failover may be in progress); not starting");
@@ -754,6 +832,9 @@ public final class SlotRebalancer {
                     deleted += ps.executeUpdate();
                 }
                 c.commit();
+                if (from == 0 && foreign.size() > BATCH) {
+                    FaultPoints.hit("mid-purge");
+                }
             }
         }
         return deleted;

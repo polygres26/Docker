@@ -509,6 +509,17 @@ qualifier needed anywhere), and the router picks the real fastest path per state
   failover persister now uses it too. Live (Postgres, three shards each with a replica, readers served by the replicas, the target's replica held back for 6 s): the move took 6.1 s because
   it waited; 2,446 keyed and scatter reads, 2,758 of them served by replicas, were all correct; without the wait the same run returned empty results for moved keys. Not run: a failover
   during a move, or replicas on MySQL, SQL Server or Oracle (positions are unit-level for those engines).
+- **When a move fails or Warp dies.** A failure inside Warp is handled where it happens: before the switch the copy is undone (staging dropped, the target purged of the
+  copied rows, writes released); after it, the old copies stay on the sources until they are removed. Either way what is left is only "rows on a shard that does not own
+  them", and `POST /api/sharding/reconcile {"table"}` removes exactly those (and drops a leftover staging table) with scatter reads held while it runs. If the Warp doing the
+  move is killed, its hold in the control plane is never released; once its lease (`WARP_RESHARD_LEASE_SECONDS`, 30) lapses, the first instance to notice (every instance checks every 10 s)
+  takes the hold over, reconciles the table and releases it, so a restart is all it needs. Between the crash and that cleanup (the lease plus up to 10 s) scatter reads of the
+  table can show moved rows twice, because the hold that kept them out has lapsed; keyed reads and writes are correct throughout. Without the control-plane tables there is no
+  recovery loop and `reconcile` is run by hand. Fault injection for tests: `WARP_FAULT_AT` = `copy-mid`, `after-verify`, `after-publish`, `before-switch`, `after-switch` or `mid-purge`
+  with `WARP_FAULT_MODE=halt` (halts the JVM, like kill -9) or anything else (throws); never set it in production. Live: each of the six points, as a thrown failure and as a halted process,
+  left the table consistent (every row on the shard that owns its slot, no staging table, no row missing or doubled) on Postgres, the throw cases at once and the halted ones
+  about 30 s after the kill with a restarted instance doing the repair, and the table could be moved again afterwards; MySQL passed a throw and two halts, and SQL Server and Oracle the
+  halt after the publish. Not run: a kill together with a shard failover, or several instances racing to recover (the hold compare-and-set decides, as for two movers).
 - **Automatic rebalancing (`WARP_AUTO_REBALANCE=true`, off by default).** On one instance at a time (a lease in the control plane), every
   `WARP_AUTO_REBALANCE_INTERVAL_SECONDS` (300) the balancer counts the rows of each slot table on every shard of its group (empty members included). When the gap
   between the fullest and the emptiest shard exceeds `WARP_AUTO_REBALANCE_THRESHOLD` (0.2) times the mean, it moves slots from the fullest to the emptiest through the same

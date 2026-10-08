@@ -643,7 +643,9 @@ public final class Main {
             String selfId = com.sayonora.warp.config.NodeRegistry.plannedNodeId(metricsPort).toString();
             reshardCoordination = new com.sayonora.warp.config.PgReshardCoordination(options, () -> selfId);
             reshardCoordination.ensureSchema();
-            reshardCoordination.start(com.sayonora.warp.core.ReshardGate.INSTANCE, configStore::appliedVersion, configStore::catchUpNow);
+            // before the config listener exists the store's own applied version is still 0, but this process started from the latest version
+            reshardCoordination.start(com.sayonora.warp.core.ReshardGate.INSTANCE,
+                    () -> Math.max(configStore.appliedVersion(), currentConfigVersion.get().version()), configStore::catchUpNow);
         } catch (Exception e) {
             log.warn("rebalancing: the cluster-wide hold is unavailable ({}); a rebalance will need a single live Warp instance", e.toString());
             reshardCoordination = null;
@@ -679,6 +681,21 @@ public final class Main {
                     }
                 }, reshardCoordination);
         metricsServer.setSlotRebalancer(slotRebalancer);
+        if (reshardCoordination != null) {
+            // a move whose mover crashed leaves copies on the wrong shard: the first instance to notice its lapsed hold cleans up
+            java.util.concurrent.ScheduledExecutorService recovery = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "warp-reshard-recovery");
+                t.setDaemon(true);
+                return t;
+            });
+            recovery.scheduleWithFixedDelay(() -> {
+                try {
+                    slotRebalancer.recoverAbandoned();
+                } catch (Exception e) {
+                    log.warn("rebalance recovery pass failed: {}", e.toString());
+                }
+            }, 10, 10, java.util.concurrent.TimeUnit.SECONDS);
+        }
         if ("true".equalsIgnoreCase(System.getenv("WARP_AUTO_REBALANCE"))) {
             try {
                 com.sayonora.warp.core.AutoBalancer autoBalancer = new com.sayonora.warp.core.AutoBalancer(slotRebalancer, ttl -> {
