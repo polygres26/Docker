@@ -458,6 +458,24 @@ qualifier needed anywhere), and the router picks the real fastest path per state
   retrieval, which that form does not allow. An `UPDATE` that assigns the shard key is refused
   (`ERR_SHARD_KEY_UPDATE`) because the row would have to move to another shard: delete it and insert it again. Before this, an unkeyed write went to the
   default backend, and `UPDATE t SET key = 9 WHERE id = 1` was routed by the new value 9.
+- **Slot sharding and online rebalancing.** `hash` sharding (`key mod N`) re-homes most rows when N changes, so it cannot be rebalanced. The `slots`
+  strategy fixes the key space instead, the idea CockroachDB's ranges and Redis Cluster's hash slots use: a key hashes (stable SHA-256, independent of the
+  shard count) to one of N slots and each slot belongs to one shard. Config: `orders:slots:customer_id:64/s1=0-31;s2=32-63` (ranges may be comma-separated,
+  `64/s1,s2` spreads evenly in runs). Adding capacity moves whole slots, not every key. `GET /api/sharding` shows each slot table's map and slots per shard;
+  `POST /api/sharding/rebalance {"table":"orders","to":"s3","count":21}` (or `"slots":[21,22]`, `"dryRun":true`) moves them: writes to the moving slots are held
+  (other slots, and all reads by key, are not), the rows are copied to the target and verified (the target holds exactly what was copied, and a second scan of
+  each source matches the first in row count and checksum, which catches a write that slipped in), the new map is written as a config version, and the old
+  copies are deleted while scatter reads of the table wait so no row is seen twice. A failure before the switch deletes what was copied and changes nothing; a
+  failure while deleting leaves duplicates and says so (`POST /api/sharding/purge {"table","shard"}` finishes it). The target must already have the table.
+  **Limits:** it is not CockroachDB: nothing rebalances by itself (an operator or script starts it), the shards are separate databases, and the hold is in
+  one Warp process, so it **refuses to run when other Warp instances are live** (`allowOtherInstances` overrides that for a table the others do not write).
+  It copies with JDBC `getObject`/`setObject` (LOBs as bytes or text), so identity/generated columns that refuse explicit values and exotic types are not
+  supported; the shard key must render as the same text the router sees (integers, strings); the keys of the moving rows are held in memory; each source is
+  scanned in full (there is no index on the slot), so writes to the moving slots wait for roughly the time of two scans of the source table; a transaction
+  that wrote to the table before the freeze and commits afterwards is caught by the second-scan check, not waited for. Live (Postgres and MySQL, 20,000 rows,
+  three writers running throughout, 21 of 64 slots moved to a new third shard and 5 moved on again): no acknowledged write lost or duplicated, none failed,
+  every row on the shard that owns its slot, scatter `count(*)` correct; writes to the moving slots were held 44 ms (Postgres) and 305 ms (MySQL). Not run on
+  SQL Server or Oracle (the copy uses plain JDBC, not engine features), with several Warp instances, or with a deliberately failing copy.
 - **Shards and replicas.** Each shard is an ordinary backend, so it can have its own replicas and its own failover mode: a keyed read, and each
   member of a scatter-gather read, can be served by that shard's replica, and a shard whose primary fails over does so on its own while the other
   shards keep serving. Live-verified on Postgres and on MySQL (`ShardedReplicaFailoverLiveTest`): two hash shards each with a replica in `promote`

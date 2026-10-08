@@ -390,10 +390,13 @@ public final class Main {
         com.sayonora.warp.core.FailoverMonitor failoverMonitor = new com.sayonora.warp.core.FailoverMonitor(
                 backendRegistry, new com.sayonora.warp.config.BackendFailoverPersister(configStore, backendRegistry),
                 auditLog);
+        java.util.concurrent.atomic.AtomicReference<com.sayonora.warp.core.FailoverCoordination> coordinationRef =
+                new java.util.concurrent.atomic.AtomicReference<>();
         try {
             com.sayonora.warp.config.PgFailoverCoordination failoverCoordination =
                     new com.sayonora.warp.config.PgFailoverCoordination(options);
             failoverCoordination.ensureSchema();
+            coordinationRef.set(failoverCoordination);
             failoverMonitor.withPromoteHooks(com.sayonora.warp.core.FailoverMonitor.defaultHooks(failoverCoordination));
         } catch (Exception e) {
             log.warn("failover: promote mode unavailable (could not prepare the lease tables in the config "
@@ -634,6 +637,36 @@ public final class Main {
                 connectionGate, oauth, firewallRuleStore, configStore, backendRegistry, dialectTranslationStage,
                 adminWebDir, options, mcpMetrics, captureBuffer, auditLog, xaRecoveryLog, federationPlanStore);
         metricsServer.setQueryRepairStage(queryRepairStage);
+        metricsServer.setSlotRebalancer(new com.sayonora.warp.core.SlotRebalancer(backendRegistry, routerStage::tableShardRules,
+                new com.sayonora.warp.core.SlotRebalancer.SpecStore() {
+                    public String tableShards() {
+                        try {
+                            return configStore.readLatest().map(v -> v.payload().routerTableShards()).orElse(config.routerTableShards());
+                        } catch (java.sql.SQLException e) {
+                            throw new IllegalStateException("cannot read the config: " + e.getMessage(), e);
+                        }
+                    }
+
+                    public void apply(String newTableShards) throws Exception {
+                        WarpConfig latest = configStore.readLatest().map(v -> v.payload()).orElse(config);
+                        WarpConfig next = latest.withRouterTableShards(newTableShards);
+                        configStore.write(next);
+                        routerStage.reconfigure(next.routerSchemaRules(), next.routerPredicateRules(), next.routerValueShardRules(),
+                                next.routerShardTables(), next.routerTableShards());
+                    }
+                }, () -> {
+                    try {
+                        var c = coordinationRef.get();
+                        if (c == null) {
+                            throw new IllegalStateException("the failover coordination tables are not available, so live Warp instances cannot be counted");
+                        }
+                        return c.liveInstances();
+                    } catch (RuntimeException e) {
+                        throw e;
+                    } catch (Exception e) {
+                        throw new IllegalStateException("cannot count live Warp instances: " + e.getMessage(), e);
+                    }
+                }));
         metricsServer.setAnomalyScheduler(anomalyScheduler);
         {
             var insights = metricsServer.insights();

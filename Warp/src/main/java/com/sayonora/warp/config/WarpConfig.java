@@ -115,6 +115,18 @@ public record WarpConfig(
                 routes, mcpUpstreams, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride, accessPolicy);
     }
 
+    /** Copy with the declarative table-shard rules ({@code WARP_TABLE_SHARDS} syntax) replaced. */
+    public WarpConfig withRouterTableShards(String tableShards) {
+        return new WarpConfig(qosRatePerSec, qosBurst, qosMaxWaitMs, qosClassLimits, qosPoolWaitThreshold,
+                cacheTables, cacheTtlMs, backends, shardBackends, backendSets,
+                routerSchemaRules, routerPredicateRules, routerValueShardRules, routerShardTables, tableShards,
+                rollupDefinitionsYaml, aclRules, aclPpv2Enabled, aclTrustedProxies,
+                oauthIssuer, oauthAudience, oauthUserIdClaim, oauthRolesClaim, awsIamCredentials,
+                llmProvider, llmApiKey, llmBaseUrl, llmModel, backendGroups,
+                backendDescriptions, backendGroupDescriptions, mcpEndpoints, backendStores, backendSetNames,
+                connectionRoutes, mcpUpstreams, storeFrontendSets, otlpExportOverride, prometheusScrapeOverride, accessPolicy);
+    }
+
     /** Copy with the mcpUpstreams field (JSON array, see McpUpstream) replaced. */
     public WarpConfig withMcpUpstreams(String mcpUpstreamsJson) {
         return new WarpConfig(qosRatePerSec, qosBurst, qosMaxWaitMs, qosClassLimits, qosPoolWaitThreshold,

@@ -173,8 +173,26 @@ public final class RouterStage implements PipelineStage {
         return shardRules;
     }
 
+    /** A live view: a holder of this list (a session's executor) sees the rules of the latest {@link #reconfigure}, not those at its creation. */
+    private final List<TableShardRule> liveTableShardRules = new java.util.AbstractList<>() {
+        @Override
+        public TableShardRule get(int index) {
+            return tableShardRules.get(index);
+        }
+
+        @Override
+        public int size() {
+            return tableShardRules.size();
+        }
+
+        @Override
+        public java.util.Iterator<TableShardRule> iterator() {
+            return tableShardRules.iterator();
+        }
+    };
+
     public List<TableShardRule> tableShardRules() {
-        return tableShardRules;
+        return liveTableShardRules;
     }
 
     /** Union of every {@code WARP_TABLE_SHARDS} rule's own {@code ShardingStrategy} backend list --
@@ -362,6 +380,43 @@ public final class RouterStage implements PipelineStage {
         return String.join(",", expanded);
     }
 
+    // Writes to a slot-sharded table admitted by ReshardGate while this thread routes a statement; released when the statement finishes.
+    private static final ThreadLocal<java.util.List<AutoCloseable>> ADMISSIONS = ThreadLocal.withInitial(ArrayList::new);
+
+    private static void releaseAdmissions() {
+        java.util.List<AutoCloseable> held = ADMISSIONS.get();
+        for (AutoCloseable c : held) {
+            try {
+                c.close();
+            } catch (Exception ignored) {
+                // a counter decrement cannot meaningfully fail
+            }
+        }
+        held.clear();
+    }
+
+    /** Admits a write to a slot-sharded table through the reshard gate; {@code keyValues} null means the slots cannot be told. */
+    private TableShardRule admitWrite(TableShardRule rule, java.util.Collection<String> keyValues) throws SQLException {
+        if (!(rule.strategy() instanceof ShardingStrategy.SlotStrategy slotted)) {
+            return rule;
+        }
+        java.util.Collection<Integer> slots = null;
+        if (keyValues != null) {
+            slots = new ArrayList<>();
+            for (String k : keyValues) {
+                slots.add(slotted.slotOf(k));
+            }
+        }
+        ADMISSIONS.get().add(ReshardGate.INSTANCE.admitWrite(rule.tableName(), slots));
+        // the statement may have waited through a switch of the slot map: route it by the map in force NOW, not the one it started with
+        for (TableShardRule current : tableShardRules) {
+            if (current.tableName().equals(rule.tableName())) {
+                return current;
+            }
+        }
+        return rule;
+    }
+
     public void reconfigure(String schemaSpec, String predicateSpec, String valueShardSpec, String shardTablesSpec) {
         reconfigure(schemaSpec, predicateSpec, valueShardSpec, shardTablesSpec, null);
     }
@@ -383,6 +438,14 @@ public final class RouterStage implements PipelineStage {
 
     @Override
     public ExecutionResult handle(Statement statement, PipelineChain next) throws SQLException {
+        try {
+            return route(statement, next);
+        } finally {
+            releaseAdmissions();
+        }
+    }
+
+    private ExecutionResult route(Statement statement, PipelineChain next) throws SQLException {
         String workloadClass = "default".equals(statement.workloadClass())
                 ? classifyWorkload(statement.sqlText())
                 : statement.workloadClass();
@@ -469,6 +532,7 @@ public final class RouterStage implements PipelineStage {
             // keyed read ever found it again. Route it by its key, or refuse it with the reason.
             InsertShardKey.Result insert = InsertShardKey.analyze(statement.sqlText(), rule.tableName(), rule.column(), statement.bindParams());
             if (insert instanceof InsertShardKey.Routed routed) {
+                rule = admitWrite(rule, routed.keyValues());
                 java.util.Set<String> owners = new java.util.LinkedHashSet<>();
                 for (String key : routed.keyValues()) {
                     String owner = rule.strategy().resolve(key);
@@ -499,8 +563,12 @@ public final class RouterStage implements PipelineStage {
                 refuseCrossShardWriteReads(statement.sqlText(), rule);
             }
             if (write instanceof WriteShardKey.Keyed keyed) {
+                rule = admitWrite(rule, java.util.List.of(keyed.keyValue()));
                 String owner = rule.strategy().resolve(keyed.keyValue());
                 return owner != null ? owner : RoutingBackendExecutor.SCATTER_ALL;
+            }
+            if (write instanceof WriteShardKey.Broadcast || write instanceof WriteShardKey.KeyChange) {
+                rule = admitWrite(rule, null);
             }
             if (write instanceof WriteShardKey.Broadcast) {
                 log.debug("router: write to sharded table {} without a usable {} predicate -> every shard", rule.tableName(), rule.column());
@@ -526,6 +594,9 @@ public final class RouterStage implements PipelineStage {
                 }
             }
             if (statement.sqlText().strip().regionMatches(true, 0, "SELECT", 0, 6)) {
+                if (ReshardGate.INSTANCE.active()) {
+                    ReshardGate.INSTANCE.admitScatterRead(rule.tableName());
+                }
                 log.debug("router: table-shard rule matched (table={}) with no routable {} value -> scatter-gather "
                         + "across this table's own shard set", rule.tableName(), rule.column());
                 return RoutingBackendExecutor.SCATTER_ALL;

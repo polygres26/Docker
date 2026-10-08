@@ -87,6 +87,12 @@ public final class MetricsServer {
     // another parameter.
     private com.sayonora.warp.core.QueryRepairStage queryRepairStage;
 
+    private volatile com.sayonora.warp.core.SlotRebalancer slotRebalancer;
+
+    public void setSlotRebalancer(com.sayonora.warp.core.SlotRebalancer rebalancer) {
+        this.slotRebalancer = rebalancer;
+    }
+
     public void setQueryRepairStage(com.sayonora.warp.core.QueryRepairStage queryRepairStage) {
         this.queryRepairStage = queryRepairStage;
     }
@@ -862,6 +868,81 @@ public final class MetricsServer {
                         response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
                         JsonObject err = new JsonObject();
                         err.addProperty("error", "control-plane database error: " + e.getMessage());
+                        response.getWriter().write(err.toString());
+                    }
+                    baseRequest.setHandled(true);
+                    return;
+                }
+                if (slotRebalancer != null && target.startsWith("/api/sharding")) {
+                    if (!authorized(request.getMethod(), role)) {
+                        response.setStatus(role == AdminRole.NONE ? HttpServletResponse.SC_UNAUTHORIZED : HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json; charset=utf-8");
+                        response.getWriter().write(role == AdminRole.NONE
+                                ? "{\"error\":\"missing or invalid admin credentials\"}"
+                                : "{\"error\":\"read-only access -- this operation requires the admin role\"}");
+                        baseRequest.setHandled(true);
+                        return;
+                    }
+                    response.setContentType("application/json; charset=utf-8");
+                    try {
+                        if ("/api/sharding".equals(target) && "GET".equals(request.getMethod())) {
+                            response.setStatus(HttpServletResponse.SC_OK);
+                            response.getWriter().write(slotRebalancer.describe().toString());
+                        } else if ("/api/sharding/rebalance".equals(target) && "POST".equals(request.getMethod())) {
+                            JsonObject body = com.google.gson.JsonParser.parseString(new String(request.getInputStream().readAllBytes(),
+                                    java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
+                            java.util.List<Integer> slots = null;
+                            if (body.has("slots") && body.get("slots").isJsonArray()) {
+                                slots = new java.util.ArrayList<>();
+                                for (var e : body.getAsJsonArray("slots")) {
+                                    slots.add(e.getAsInt());
+                                }
+                            }
+                            Integer count = body.has("count") ? body.get("count").getAsInt() : null;
+                            var plan = slotRebalancer.plan(body.get("table").getAsString(), body.get("to").getAsString(), slots, count);
+                            JsonObject out = new JsonObject();
+                            out.addProperty("table", plan.table());
+                            out.addProperty("to", plan.to());
+                            out.addProperty("slotsToMove", plan.slotCount());
+                            JsonObject from = new JsonObject();
+                            plan.slotsBySource().forEach((k, v) -> from.addProperty(k, v.size()));
+                            out.add("slotsFromShard", from);
+                            out.addProperty("currentMap", plan.currentParams());
+                            out.addProperty("newMap", plan.newParams());
+                            if (body.has("dryRun") && body.get("dryRun").getAsBoolean()) {
+                                out.addProperty("dryRun", true);
+                            } else {
+                                var result = slotRebalancer.rebalance(plan, body.has("allowOtherInstances") && body.get("allowOtherInstances").getAsBoolean());
+                                out.addProperty("rowsCopied", result.rowsCopied());
+                                out.addProperty("rowsRemovedFromSources", result.rowsRemovedFromSources());
+                                out.addProperty("writesHeldMillis", result.writesHeldMillis());
+                                if (result.warning() != null) {
+                                    out.addProperty("warning", result.warning());
+                                }
+                            }
+                            response.setStatus(HttpServletResponse.SC_OK);
+                            response.getWriter().write(out.toString());
+                        } else if ("/api/sharding/purge".equals(target) && "POST".equals(request.getMethod())) {
+                            JsonObject body = com.google.gson.JsonParser.parseString(new String(request.getInputStream().readAllBytes(),
+                                    java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
+                            long removed = slotRebalancer.purge(body.get("table").getAsString(), body.get("shard").getAsString());
+                            JsonObject out = new JsonObject();
+                            out.addProperty("rowsRemoved", removed);
+                            response.setStatus(HttpServletResponse.SC_OK);
+                            response.getWriter().write(out.toString());
+                        } else {
+                            response.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
+                            response.getWriter().write("{\"error\":\"use GET /api/sharding, POST /api/sharding/rebalance or POST /api/sharding/purge\"}");
+                        }
+                    } catch (IllegalArgumentException | IllegalStateException | com.google.gson.JsonParseException | NullPointerException e) {
+                        response.setStatus(HttpServletResponse.SC_CONFLICT);
+                        JsonObject err = new JsonObject();
+                        err.addProperty("error", String.valueOf(e.getMessage()));
+                        response.getWriter().write(err.toString());
+                    } catch (Exception e) {
+                        response.setStatus(HttpServletResponse.SC_BAD_GATEWAY);
+                        JsonObject err = new JsonObject();
+                        err.addProperty("error", String.valueOf(e.getMessage()));
                         response.getWriter().write(err.toString());
                     }
                     baseRequest.setHandled(true);
