@@ -436,13 +436,26 @@ qualifier needed anywhere), and the router picks the real fastest path per state
   names, and the `?`, `$n` and `:n` bind forms; trailing `ON CONFLICT`, `ON DUPLICATE KEY UPDATE` and `RETURNING` are ignored. What it cannot
   resolve with certainty is **refused with the reason** (`ERR_SHARD_INSERT_UNROUTABLE`) instead of guessed: no column list, `INSERT ... SELECT`,
   `DEFAULT VALUES`, a shard key that is `NULL`, `DEFAULT`, an expression or a named bind, or no bind value. A multi-row insert whose rows belong to
-  different shards is refused too (`ERR_SHARD_INSERT_SPANS_SHARDS`): split it per shard (Warp does not split it, because the parts would not be
-  atomic). **`UPDATE` and `DELETE`** (`WriteShardKey`) are analysed the same careful way, and more strictly than the text match a `SELECT` uses: a
+  different shards is **cut into one INSERT per owning shard** (rows keep their order, each shard gets exactly its own `?` binds, anything after the
+  last row such as `ON CONFLICT` is repeated on each). That needs positional `?` binds or literals: with `$n`/`:n`/named binds, or a `RETURNING`/`OUTPUT`
+  clause, the statement cannot be regrouped and is refused (`ERR_SHARD_INSERT_SPANS_SHARDS`). **`UPDATE` and `DELETE`** (`WriteShardKey`) are analysed the same careful way, and more strictly than the text match a `SELECT` uses: a
   `WHERE` that is a plain conjunction containing `key = value` (literal or `?`, `$n`, `:n` bind) goes to the one shard that owns it; anything that cannot be
   proven to touch one shard (no `WHERE`, no key predicate, a range or `IN`, the key only under an `OR` or inside a subquery) runs on **every shard of that
-  table, on each shard's primary**, and the affected-row counts are added up. Not atomic: the shards are separate databases, so a broadcast write is
-  refused inside a transaction (`ERR_SHARD_WRITE_IN_TRANSACTION`), and if a shard fails after others applied it the error says how many already did and
-  which shard failed (`ERR_SHARD_WRITE_PARTIAL`); nothing is rolled back. An `UPDATE` that assigns the shard key is refused
+  table, on each shard's primary**, and the affected-row counts are added up.
+  **Atomicity.** A write that runs on several shards (a broadcast UPDATE/DELETE or a split INSERT) gets one XA branch per shard and is prepared and
+  committed with two-phase commit, using the same coordinator and durable recovery log as a client transaction, so either every shard applies it or none does,
+  and a crash between prepare and commit is finished at the next start. Inside a client transaction the branches are the transaction's own and the client's
+  COMMIT or ROLLBACK decides all of them (the old refusal `ERR_SHARD_WRITE_IN_TRANSACTION` is gone). Where the shards cannot do two-phase commit
+  (PostgreSQL with `max_prepared_transactions=0`, Oracle without the `DBA_2PC_PENDING`/`PENDING_TRANS$`/`DBMS_SYSTEM` grants, SQL Server without the `sqljdbc_xa`
+  procedures) Warp falls back, with a one-time WARN per table, to **commit-last**: the statement runs on every shard in an open local transaction, every shard is
+  rolled back if any rejects it, and the shards are then committed one after another. What remains is a failure while committing the second or a later shard,
+  reported with how many had committed (`ERR_SHARD_WRITE_PARTIAL`). `WARP_SHARD_WRITE_2PC=required` refuses instead of falling back
+  (`ERR_SHARD_WRITE_2PC_REQUIRED`). **Reads inside a write**: each shard sees only its own rows, so an `UPDATE`/`DELETE` that also reads another sharded table, or the
+  same one twice (a join, `FROM`/`USING`, a subquery), is refused (`ERR_SHARD_WRITE_READS_SHARDED`); other tables are assumed to be present in full on every shard.
+  Live-verified: Postgres and MySQL (2PC, with replicas and failovers), Oracle Free 23ai (2PC, grants applied); SQL Server 2022 on Linux has no XA support in a stock
+  container, so there the commit-last fallback was verified and client transactions that need XA were not. Shard groups are homogeneous, so mixed-engine shards
+  were not tested. An Oracle multi-row `VALUES` insert needs Oracle 23ai or newer (the table value constructor); Warp now retries it without generated-key
+  retrieval, which that form does not allow. An `UPDATE` that assigns the shard key is refused
   (`ERR_SHARD_KEY_UPDATE`) because the row would have to move to another shard: delete it and insert it again. Before this, an unkeyed write went to the
   default backend, and `UPDATE t SET key = 9 WHERE id = 1` was routed by the new value 9.
 - **Shards and replicas.** Each shard is an ordinary backend, so it can have its own replicas and its own failover mode: a keyed read, and each

@@ -288,7 +288,8 @@ public final class RoutingBackendExecutor implements BackendExecutor {
 
     private ExecutionResult executeScatterGather(Statement statement) throws SQLException {
         String head = statement.sqlText().strip();
-        if (head.regionMatches(true, 0, "UPDATE", 0, 6) || head.regionMatches(true, 0, "DELETE", 0, 6)) {
+        if (head.regionMatches(true, 0, "UPDATE", 0, 6) || head.regionMatches(true, 0, "DELETE", 0, 6)
+                || head.regionMatches(true, 0, "INSERT", 0, 6)) {
             return scatterWrite(statement);
         }
         if (!head.regionMatches(true, 0, "SELECT", 0, 6)) {
@@ -374,45 +375,215 @@ public final class RoutingBackendExecutor implements BackendExecutor {
      *     scatter, unlike {@link ShardJoinExecutor#matchedTableShardRules}, which additionally
      *     requires a JOIN keyword. */
     /**
-     * An UPDATE or DELETE of a declaratively sharded table that cannot be proven to touch one shard runs on every shard of that table,
-     * on each shard's primary, and the affected-row counts are added up. The shards are separate databases, so the statement is not
-     * atomic across them: if one fails after others applied it, the error says which shards already did, and nothing is rolled back. For
-     * the same reason it is refused inside a transaction.
+     * A write to a declaratively sharded table that has to run on several shards: an UPDATE or DELETE that cannot be proven to touch
+     * one shard (it runs on every shard's primary) or a multi-row INSERT whose rows belong to different shards (it is cut into one
+     * INSERT per owning shard). Affected-row counts are added up.
+     *
+     * <p>The shards are separate databases, so atomicity comes from two-phase commit: each shard gets an XA branch, the statement runs
+     * on all of them, and only if every shard accepted it are the branches prepared and committed ({@link XaTransaction}, with the
+     * durable recovery log, so a crash between prepare and commit is finished on the next start). Any failure rolls every shard back.
+     * Inside a client transaction the branches are the transaction's own, so the client's COMMIT or ROLLBACK decides all of them.
      */
     private ExecutionResult scatterWrite(Statement statement) throws SQLException {
         RouterStage.TableShardRule rule = null;
         for (RouterStage.TableShardRule candidate : matchedTableShardRules(statement.sqlText())) {
-            if (!(WriteShardKey.analyze(statement.sqlText(), candidate.tableName(), candidate.column(), statement.bindParams())
-                    instanceof WriteShardKey.NotApplicable)) {
+            boolean applies = WriteShardKey.analyze(statement.sqlText(), candidate.tableName(), candidate.column(), statement.bindParams())
+                    instanceof WriteShardKey.NotApplicable ? InsertShardKey.analyze(statement.sqlText(), candidate.tableName(),
+                            candidate.column(), statement.bindParams()) instanceof InsertShardKey.Routed : true;
+            if (applies) {
                 rule = candidate;
             }
         }
         if (rule == null) {
             throw ErrorCatalog.sqlException("ERR_SCATTER_ONLY_SELECT", statement.sqlText());
         }
-        if (transactionConnections != null) {
-            throw ErrorCatalog.sqlException("ERR_SHARD_WRITE_IN_TRANSACTION", rule.tableName());
+        Map<String, Statement> perShard = new LinkedHashMap<>();
+        if (InsertShardKey.analyze(statement.sqlText(), rule.tableName(), rule.column(), statement.bindParams())
+                instanceof InsertShardKey.Routed routed) {
+            perShard.putAll(splitInsert(statement, rule, routed));
+        } else {
+            for (String shardName : ShardingStrategy.allBackends(rule.strategy())) {
+                perShard.put(shardName, statement);
+            }
         }
-        List<String> shardNames = ShardingStrategy.allBackends(rule.strategy());
-        checkScope(statement, shardNames);
-        long total = 0;
-        int applied = 0;
-        for (String shardName : shardNames) {
-            BackendTarget target = registry.resolveForRouting(shardName);
+        checkScope(statement, new ArrayList<>(perShard.keySet()));
+        Map<BackendTarget, Statement> work = new LinkedHashMap<>();
+        for (Map.Entry<String, Statement> e : perShard.entrySet()) {
+            BackendTarget target = registry.resolveForRouting(e.getKey());
             if (target == null) {
-                throw ErrorCatalog.sqlException("ERR_SHARD_UNKNOWN_BACKEND", shardName);
+                throw ErrorCatalog.sqlException("ERR_SHARD_UNKNOWN_BACKEND", e.getKey());
             }
-            try {
-                total += executeOnFreshConnection(target, statement).updateCount();
-                applied++;
-            } catch (SQLException e) {
-                if (applied == 0) {
-                    throw e;
+            work.put(target, e.getValue());
+        }
+        long total = 0;
+        if (transactionConnections != null) {
+            for (Map.Entry<BackendTarget, Statement> e : work.entrySet()) {
+                total += executeOnTransactionConnection(e.getKey(), e.getValue()).updateCount();
+            }
+            return ExecutionResult.ofUpdate(total);
+        }
+        boolean required = "required".equalsIgnoreCase(System.getenv("WARP_SHARD_WRITE_2PC"));
+        try {
+            return writeWithTwoPhaseCommit(work);
+        } catch (TwoPhaseCommitUnavailable unavailable) {
+            if (required) {
+                throw ErrorCatalog.sqlException("ERR_SHARD_WRITE_2PC_REQUIRED", rule.tableName(), unavailable.getMessage());
+            }
+            if (WARNED_NO_2PC.add(rule.tableName())) {
+                log.warn("shard write: the shards of '{}' do not support two-phase commit ({}); multi-shard writes are rolled back "
+                        + "together if any shard rejects the statement, but a failure while committing can leave some shards committed. "
+                        + "Set WARP_SHARD_WRITE_2PC=required to refuse instead", rule.tableName(), unavailable.getMessage());
+            }
+            return writeCommitLast(work, rule.tableName());
+        }
+    }
+
+    private static final java.util.Set<String> WARNED_NO_2PC = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** The shards cannot take part in two-phase commit (XA not installed, prepared transactions disabled, ...). */
+    private static final class TwoPhaseCommitUnavailable extends Exception {
+        TwoPhaseCommitUnavailable(String message) {
+            super(message);
+        }
+    }
+
+    private static boolean xaFailure(SQLException e) {
+        String m = e.getMessage();
+        return m != null && (m.startsWith("xa start failed") || m.startsWith("xa end failed") || m.startsWith("xa prepare failed"));
+    }
+
+    /** One XA branch per shard; run, then prepare and commit them together. Any failure before the commit decision rolls everything back. */
+    private ExecutionResult writeWithTwoPhaseCommit(Map<BackendTarget, Statement> work) throws SQLException, TwoPhaseCommitUnavailable {
+        XaTransaction xa = new XaTransaction(recoveryLog);
+        List<Connection> opened = new ArrayList<>();
+        long total = 0;
+        try {
+            for (Map.Entry<BackendTarget, Statement> e : work.entrySet()) {
+                XaBackendFactory.XaBranch branch;
+                try {
+                    branch = XaBackendFactory.open(e.getKey());
+                    opened.add(branch.connection());
+                    xa.addBranch(e.getKey(), branch.resource());
+                } catch (SQLException setup) {
+                    throw new TwoPhaseCommitUnavailable(setup.getMessage());
                 }
-                throw ErrorCatalog.sqlException("ERR_SHARD_WRITE_PARTIAL", applied, shardNames.size(), shardName, e.getMessage());
+                total += new JdbcBackendExecutor(branch.connection()).execute(e.getValue()).updateCount();
             }
+        } catch (SQLException | RuntimeException | TwoPhaseCommitUnavailable failure) {
+            try {
+                xa.rollback();
+            } catch (SQLException | RuntimeException rollbackFailure) {
+                log.warn("shard write: rollback after a failure also failed: {}", rollbackFailure.toString());
+            }
+            closeAll(opened);
+            throw failure;
+        }
+        try {
+            xa.commit();
+        } catch (SQLException e) {
+            if (xaFailure(e)) {
+                // prepare failed on some shard: XaTransaction already rolled every branch back, so the write can be run again another way
+                throw new TwoPhaseCommitUnavailable(e.getMessage());
+            }
+            throw e;
+        } finally {
+            closeAll(opened);
         }
         return ExecutionResult.ofUpdate(total);
+    }
+
+    /**
+     * Without two-phase commit: run the statement on every shard inside an open local transaction, roll all of them back if any shard
+     * rejects it, and only then commit them one after another. The remaining risk is a failure during that last loop.
+     */
+    private ExecutionResult writeCommitLast(Map<BackendTarget, Statement> work, String table) throws SQLException {
+        List<Connection> opened = new ArrayList<>();
+        long total = 0;
+        try {
+            for (Map.Entry<BackendTarget, Statement> e : work.entrySet()) {
+                Connection c = e.getKey().openManualCommit();
+                opened.add(c);
+                total += new JdbcBackendExecutor(c).execute(e.getValue()).updateCount();
+            }
+        } catch (SQLException | RuntimeException failure) {
+            for (Connection c : opened) {
+                try {
+                    c.rollback();
+                } catch (SQLException ignored) {
+                    // the connection is closed next
+                }
+            }
+            closeAll(opened);
+            throw failure;
+        }
+        int committed = 0;
+        List<BackendTarget> targets = new ArrayList<>(work.keySet());
+        try {
+            for (Connection c : opened) {
+                c.commit();
+                committed++;
+            }
+        } catch (SQLException e) {
+            for (int i = committed; i < opened.size(); i++) {
+                try {
+                    opened.get(i).rollback();
+                } catch (SQLException ignored) {
+                    // best effort
+                }
+            }
+            if (committed == 0) {
+                throw e;
+            }
+            throw ErrorCatalog.sqlException("ERR_SHARD_WRITE_PARTIAL", committed, opened.size(), table, targets.get(committed).name(), e.getMessage());
+        } finally {
+            closeAll(opened);
+        }
+        return ExecutionResult.ofUpdate(total);
+    }
+
+    private static void closeAll(List<Connection> connections) {
+        for (Connection c : connections) {
+            try {
+                c.close();
+            } catch (SQLException ignored) {
+                // closing after the outcome is decided
+            }
+        }
+    }
+
+    /** One INSERT per owning shard, rows in their original order, each with exactly its own bind values. */
+    static Map<String, Statement> splitInsert(Statement statement, RouterStage.TableShardRule rule,
+            InsertShardKey.Routed routed) throws SQLException {
+        InsertShardKey.Split split = routed.split();
+        if (split == null) {
+            throw ErrorCatalog.sqlException("ERR_SHARD_INSERT_UNROUTABLE", rule.tableName(), rule.column(),
+                    "the rows belong to different shards and this statement cannot be cut apart");
+        }
+        Map<String, List<Integer>> rowsByShard = new LinkedHashMap<>();
+        for (int i = 0; i < routed.keyValues().size(); i++) {
+            String owner = rule.strategy().resolve(routed.keyValues().get(i));
+            if (owner == null) {
+                throw ErrorCatalog.sqlException("ERR_SHARD_INSERT_UNROUTABLE", rule.tableName(), rule.column(),
+                        "no shard owns the value " + routed.keyValues().get(i));
+            }
+            rowsByShard.computeIfAbsent(owner, k -> new ArrayList<>()).add(i);
+        }
+        Map<String, Statement> out = new LinkedHashMap<>();
+        for (Map.Entry<String, List<Integer>> e : rowsByShard.entrySet()) {
+            StringBuilder sql = new StringBuilder(split.prefix());
+            List<Object> binds = new ArrayList<>();
+            boolean first = true;
+            for (int row : e.getValue()) {
+                sql.append(first ? " " : ", ").append(split.rows().get(row));
+                first = false;
+                for (int b = 0; b < split.bindCount().get(row); b++) {
+                    binds.add(statement.bindParams().get(split.bindStart().get(row) + b));
+                }
+            }
+            sql.append(split.suffix());
+            out.put(e.getKey(), statement.withSqlAndBinds(sql.toString(), statement.bindParams() == null ? null : binds));
+        }
+        return out;
     }
 
     private List<RouterStage.TableShardRule> matchedTableShardRules(String sql) {

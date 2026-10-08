@@ -109,9 +109,21 @@ public final class JdbcBackendExecutor implements BackendExecutor {
         } catch (SQLException e) {
             statementCache.remove(sqlText);
             closeQuietly(stmt);
+            if (e.getErrorCode() == ORA_RETURNING_WITH_TABLE_VALUE_CONSTRUCTOR) {
+                // Oracle 23ai: the driver turns RETURN_GENERATED_KEYS into a RETURNING clause, which a multi-row
+                // INSERT ... VALUES (...), (...) does not allow. Run it plainly; there is no single generated key to return.
+                PreparedStatement plain = connection.prepareStatement(sqlText);
+                try {
+                    return executeOnPreparedStatement(plain, statement.bindParams());
+                } finally {
+                    closeQuietly(plain);
+                }
+            }
             throw e;
         }
     }
+
+    private static final int ORA_RETURNING_WITH_TABLE_VALUE_CONSTRUCTOR = 63809;
 
     private void closeAllCachedStatements() {
         for (PreparedStatement stmt : statementCache.values()) {
