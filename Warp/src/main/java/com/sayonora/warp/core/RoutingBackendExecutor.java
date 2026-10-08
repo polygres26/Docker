@@ -51,6 +51,8 @@ public final class RoutingBackendExecutor implements BackendExecutor {
     // Wall-clock millis of this session's most recent statement that was not a plain replica-safe
     // read; reads inside the read-your-writes window after it stay on the primary.
     private long lastNonReadMillis = Long.MIN_VALUE / 2;
+    // Per-session log positions of this session's writes (read-your-writes); null unless WARP_READ_YOUR_WRITES=true.
+    private final SessionWriteTokens writeTokens = SessionWriteTokens.enabledByEnv() ? new SessionWriteTokens(SessionWriteTokens.ENGINE) : null;
     // Whether this session holds state that lives on its own backend connection (SET values, temp
     // tables, an open cursor...). null means "unknown": the supplied-connection (default) path then
     // never goes to a replica, because a fresh replica connection would not carry that state.
@@ -171,6 +173,11 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         } catch (SQLException e) {
             firstFailure = e;
         }
+        if (writeTokens != null && actuallyCommit && firstFailure == null) {
+            for (String name : transactionConnections.keySet()) {
+                recordWriteToken(name);
+            }
+        }
         for (Connection connection : transactionConnections.values()) {
             try {
                 connection.close();
@@ -188,6 +195,33 @@ public final class RoutingBackendExecutor implements BackendExecutor {
 
     @Override
     public ExecutionResult execute(Statement statement) throws SQLException {
+        ExecutionResult result = executeStatement(statement);
+        if (writeTokens != null && transactionConnections == null && !registry.allReplicaSpecs().isEmpty()
+                && !StatementClassifier.isReplicaSafeRead(statement.sqlText())) {
+            String target = statement.targetBackend();
+            if (SCATTER_ALL.equals(target)) {
+                for (String name : registry.allReplicaSpecs().keySet()) {
+                    recordWriteToken(name);
+                }
+            } else {
+                recordWriteToken(target == null ? defaultExecutorBackendName : target);
+            }
+        }
+        return result;
+    }
+
+    /** Remembers where the primary's log stands now, after a write by this session (read-your-writes). */
+    private void recordWriteToken(String backendName) {
+        if (registry.replicaSpecsOf(backendName).isEmpty()) {
+            return;
+        }
+        BackendTarget primary = registry.resolveForRouting(backendName);
+        if (primary != null) {
+            writeTokens.recordWrite(backendName, primary);
+        }
+    }
+
+    private ExecutionResult executeStatement(Statement statement) throws SQLException {
         // Conservatively treat anything that is not provably a plain read as a (potential) write
         // BEFORE running it: if it fails, the next read staying on the primary is merely cautious.
         // Skipped entirely when no replica is configured anywhere (the common case) to keep this
@@ -727,13 +761,27 @@ public final class RoutingBackendExecutor implements BackendExecutor {
             router.record(primaryName, ReplicaRouter.Reason.SESSION_STATE);
             return null;
         }
-        if (System.currentTimeMillis() - lastNonReadMillis < READ_AFTER_WRITE_WINDOW_MILLIS) {
+        boolean withinWindow = System.currentTimeMillis() - lastNonReadMillis < READ_AFTER_WRITE_WINDOW_MILLIS;
+        if (writeTokens == null && withinWindow) {
             router.record(primaryName, ReplicaRouter.Reason.RECENT_WRITE);
             return null;
         }
         ReplicaRouter.Replica replica = router.pick(primaryName);
         if (replica == null) {
             return null;
+        }
+        if (writeTokens != null) {
+            // read-your-writes: the replica must hold this session's last write; with no usable position the old time window decides
+            SessionWriteTokens.Verdict verdict = writeTokens.check(primaryName, registry.resolveForRouting(primaryName), replica.target());
+            if (verdict == SessionWriteTokens.Verdict.BEHIND) {
+                router.retract(replica);
+                return null;
+            }
+            if (verdict != SessionWriteTokens.Verdict.SAFE && withinWindow) {
+                router.retract(replica);
+                router.record(primaryName, ReplicaRouter.Reason.RECENT_WRITE);
+                return null;
+            }
         }
         try (Connection connection = replica.target().open()) {
             return new JdbcBackendExecutor(connection).execute(statement);

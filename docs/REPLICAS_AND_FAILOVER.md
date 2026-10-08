@@ -68,6 +68,21 @@ is a replica, lag ≤ its `maxLagSeconds`, and it is not quarantined.
 | `WARP_REPLICA_LAG_CHECK_SECONDS` | 5 | lag sampling period; `0` disables replica reads |
 | `WARP_REPLICA_QUARANTINE_SECONDS` | 30 | pause after a connect/read-only failure |
 | `WARP_READ_AFTER_WRITE_WINDOW_MS` | 2000 | read-your-writes window per session |
+| `WARP_READ_YOUR_WRITES` | off | `true` replaces the fixed window with a per-session log-position check (below) |
+
+**Read-your-writes by log position (`WARP_READ_YOUR_WRITES=true`).** The fixed window is wrong both ways: a replica lagging by more than the
+window serves a read that cannot see the session's own write (up to the replica's `maxLag`, 10 s in the examples), and a replica that caught up long
+ago is still avoided. With the flag on, right after a session's write Warp records the primary's log position (after commit for a transaction), and a
+read goes to a replica only once that replica has **applied** the log up to it; a replica that has done so is remembered until the session's next
+write, so the check costs one small query per replica per write, not per read. Positions: Postgres `pg_current_wal_lsn()` against
+`pg_last_wal_replay_lsn()`; MySQL binary log file and position against `Relay_Source_Log_File`/`Exec_Source_Log_Pos` (not GTIDs, so it needs the
+default file-based coordinates, which every source has); SQL Server `last_commit_lsn` on both nodes (`last_redone_lsn` does not work: it trails the
+primary's hardened LSN even when fully caught up); Oracle the database's `current_scn` on both. When an engine returns no position or the capture
+fails, that write falls back to the time window, so routing is never less safe than without the flag. A token is dropped when the backend's primary
+changes. It costs one extra query on the primary after each write of a session that uses a replicated backend. Live: Postgres end to end (replica
+replay paused for longer than the window: the control run read its stale replica and missed its own row, the flagged run read its own write, and
+reads returned to the replica after it caught up); MySQL and SQL Server position probes against a stopped/suspended replica and after catch-up.
+**Not run:** Oracle positions (no standby available), MySQL and SQL Server end to end through Warp, and chained or multi-source MySQL replication.
 
 Postgres lag is `0` when the WAL receiver is `streaming` and everything received has been replayed;
 otherwise it is `now() - pg_last_xact_replay_timestamp()`, which can only over-report (the safe side).

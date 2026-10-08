@@ -59,7 +59,7 @@ public final class ReplicaRouter {
     }
 
     public enum Reason {
-        ROUTED_TO_REPLICA, NOT_READ_SAFE, RECENT_WRITE, SESSION_STATE, NO_ELIGIBLE_REPLICA, REPLICA_RETRIED_ON_PRIMARY
+        ROUTED_TO_REPLICA, NOT_READ_SAFE, RECENT_WRITE, REPLICA_BEHIND_SESSION_WRITE, SESSION_STATE, NO_ELIGIBLE_REPLICA, REPLICA_RETRIED_ON_PRIMARY
     }
 
     private final BackendRegistry registry;
@@ -150,6 +150,18 @@ public final class ReplicaRouter {
         record(primaryName, Reason.ROUTED_TO_REPLICA);
         routedPerReplica.computeIfAbsent(chosen.key(), k -> new AtomicLong()).incrementAndGet();
         return chosen;
+    }
+
+    /** Takes back the count of a {@link #pick} whose replica turned out not to hold the session's own write. */
+    public void retract(Replica chosen) {
+        AtomicLong n = routedPerReplica.get(chosen.key());
+        if (n != null) {
+            n.decrementAndGet();
+        }
+        AtomicLong r = reasonsPerPrimary.computeIfAbsent(chosen.primaryName(), k -> new ConcurrentHashMap<>())
+                .computeIfAbsent(Reason.ROUTED_TO_REPLICA, k -> new AtomicLong());
+        r.decrementAndGet();
+        record(chosen.primaryName(), Reason.REPLICA_BEHIND_SESSION_WRITE);
     }
 
     boolean isEligible(Replica r) {

@@ -189,6 +189,44 @@ final class MySqlHa implements EngineHa {
         }
     }
 
+    /** Binary log coordinates as one number: log file number in the high bits, position in the low 32. */
+    private static java.math.BigInteger coordinates(String file, String pos) {
+        if (file == null || pos == null || file.lastIndexOf('.') < 0) {
+            return null;
+        }
+        long number = Long.parseLong(file.substring(file.lastIndexOf('.') + 1));
+        return java.math.BigInteger.valueOf((number << 32) | Long.parseLong(pos));
+    }
+
+    @Override
+    public java.util.Optional<java.math.BigInteger> writePosition(BackendTarget primary) throws SQLException {
+        try (Connection c = connect(primary, 5000, 30000); Statement st = c.createStatement()) {
+            ResultSet opened;
+            try {
+                opened = st.executeQuery("SHOW BINARY LOG STATUS");
+            } catch (SQLException older) {
+                opened = st.executeQuery("SHOW MASTER STATUS");
+            }
+            try (ResultSet rs = opened) {
+                return rs.next() ? java.util.Optional.ofNullable(coordinates(rs.getString("File"), rs.getString("Position")))
+                        : java.util.Optional.empty();
+            }
+        }
+    }
+
+    @Override
+    public java.util.Optional<java.math.BigInteger> appliedPosition(BackendTarget replica) throws SQLException {
+        try (Connection c = connect(replica, 5000, 30000)) {
+            Optional<Map<String, String>> st = replicaStatus(c);
+            if (st.isEmpty()) {
+                return java.util.Optional.empty();
+            }
+            Map<String, String> row = st.get();
+            return java.util.Optional.ofNullable(coordinates(col(row, "Relay_Source_Log_File", "Relay_Master_Log_File"),
+                    col(row, "Exec_Source_Log_Pos", "Exec_Master_Log_Pos")));
+        }
+    }
+
     @Override
     public void promote(BackendTarget replica) throws SQLException {
         try (Connection c = connect(replica, 5000, 120000); Statement st = c.createStatement()) {

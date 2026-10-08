@@ -209,6 +209,22 @@ final class OracleHa implements EngineHa {
         return v == null || v.isBlank() ? OptionalLong.empty() : OptionalLong.of(new java.math.BigDecimal(v.trim()).longValue());
     }
 
+    @Override
+    public java.util.Optional<java.math.BigInteger> writePosition(BackendTarget primary) throws SQLException {
+        return scn(primary);
+    }
+
+    @Override
+    public java.util.Optional<java.math.BigInteger> appliedPosition(BackendTarget replica) throws SQLException {
+        return scn(replica);
+    }
+
+    /** The database's current SCN: on a physical standby with apply running it is the SCN it has applied up to. */
+    private java.util.Optional<java.math.BigInteger> scn(BackendTarget n) throws SQLException {
+        String v = sql.one(n, false, "SELECT current_scn FROM v$database");
+        return v == null || v.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(new java.math.BigDecimal(v.trim()).toBigInteger());
+    }
+
     // ---- driving Data Guard with SQL (opt-in, UNVERIFIED against a real Data Guard configuration) ---------------------------
 
     /** The statements a switchover and a failover are made of, run as SYSDBA. A seam so the sequence can be tested without a database. */
