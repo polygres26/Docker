@@ -115,7 +115,7 @@ public final class RoutingBackendExecutor implements BackendExecutor {
         this.defaultExecutor = defaultExecutor;
         this.recoveryLog = recoveryLog;
         this.shardRules = List.copyOf(shardRules);
-        this.tableShardRules = List.copyOf(tableShardRules);
+        this.tableShardRules = tableShardRules; // not copied: RouterStage hands out a live view so a long-lived session follows a reconfigure
     }
 
     /** Fluent, so a call site can chain it right onto the constructor -- see

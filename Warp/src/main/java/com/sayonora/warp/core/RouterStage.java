@@ -203,7 +203,7 @@ public final class RouterStage implements PipelineStage {
     public static java.util.Set<String> tableShardBackendNames(List<TableShardRule> rules) {
         java.util.Set<String> names = new java.util.LinkedHashSet<>();
         for (TableShardRule rule : rules) {
-            names.addAll(ShardingStrategy.allBackends(rule.strategy()));
+            names.addAll(ShardingStrategy.groupMembers(rule.strategy()));
         }
         return names;
     }
@@ -594,8 +594,8 @@ public final class RouterStage implements PipelineStage {
                 }
             }
             if (statement.sqlText().strip().regionMatches(true, 0, "SELECT", 0, 6)) {
-                if (ReshardGate.INSTANCE.active()) {
-                    ReshardGate.INSTANCE.admitScatterRead(rule.tableName());
+                if (rule.strategy() instanceof ShardingStrategy.SlotStrategy) {
+                    ADMISSIONS.get().add(ReshardGate.INSTANCE.admitScatterRead(rule.tableName()));
                 }
                 log.debug("router: table-shard rule matched (table={}) with no routable {} value -> scatter-gather "
                         + "across this table's own shard set", rule.tableName(), rule.column());

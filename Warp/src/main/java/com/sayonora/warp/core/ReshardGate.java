@@ -21,6 +21,7 @@ public final class ReshardGate {
     private final Map<String, Set<Integer>> frozen = new ConcurrentHashMap<>();
     private final Set<String> scatterBlocked = ConcurrentHashMap.newKeySet();
     private final Map<String, AtomicInteger> inflight = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> inflightScatter = new ConcurrentHashMap<>();
     private final Object lock = new Object();
     private volatile boolean active;
 
@@ -119,9 +120,24 @@ public final class ReshardGate {
         return false;
     }
 
-    /** Waits while scatter reads of {@code table} are blocked. */
-    public void admitScatterRead(String table) throws SQLException {
+    /**
+     * Admits a scatter read of {@code table}: it waits while scatter reads are blocked, and is counted until it finishes so the mover can wait
+     * for the ones admitted before the block (a read admitted just before the block may still work out its shard list after the new map is live).
+     */
+    public AutoCloseable admitScatterRead(String table) throws SQLException {
         String k = key(table);
+        AtomicInteger n = inflightScatter.computeIfAbsent(k, x -> new AtomicInteger());
+        AutoCloseable done = () -> {
+            n.decrementAndGet();
+            synchronized (lock) {
+                lock.notifyAll();
+            }
+        };
+        n.incrementAndGet();
+        if (!active || !scatterBlocked.contains(k)) {
+            return done;
+        }
+        n.decrementAndGet();
         long deadline = System.currentTimeMillis() + waitMillis();
         synchronized (lock) {
             while (scatterBlocked.contains(k)) {
@@ -136,15 +152,19 @@ public final class ReshardGate {
                     throw ErrorCatalog.sqlException("ERR_SHARD_RESHARDING", table);
                 }
             }
+            n.incrementAndGet();
+            return done;
         }
     }
 
-    /** Waits until every write admitted to {@code table} before the freeze has finished; false on timeout. */
-    public boolean awaitDrained(String table, long timeoutMillis) {
-        String k = key(table);
+    /** Waits until every scatter read admitted to {@code table} has finished; false on timeout. */
+    public boolean awaitScatterDrained(String table, long timeoutMillis) {
+        return awaitCount(inflightScatter.get(key(table)), timeoutMillis);
+    }
+
+    private boolean awaitCount(AtomicInteger n, long timeoutMillis) {
         long deadline = System.currentTimeMillis() + timeoutMillis;
         synchronized (lock) {
-            AtomicInteger n = inflight.get(k);
             while (n != null && n.get() > 0) {
                 long left = deadline - System.currentTimeMillis();
                 if (left <= 0) {
@@ -159,6 +179,11 @@ public final class ReshardGate {
             }
             return true;
         }
+    }
+
+    /** Waits until every write admitted to {@code table} before the freeze has finished; false on timeout. */
+    public boolean awaitDrained(String table, long timeoutMillis) {
+        return awaitCount(inflight.get(key(table)), timeoutMillis);
     }
 
     private static long waitMillis() {

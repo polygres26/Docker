@@ -477,14 +477,22 @@ qualifier needed anywhere), and the router picks the real fastest path per state
   (`1024/stripe:s1,s2`, ranges with a step such as `0-1022/2`). Live (Postgres): 5,000 rows on two hash shards converted with 0 rows moved, keyed reads
   unchanged, then 300 of 1,024 slots moved to a new third shard with the table found everywhere afterwards.
   **Limits:** it is not CockroachDB: nothing rebalances by itself (an operator or script starts it), the shards are separate databases, and the hold is in
-  one Warp process, so it **refuses to run when other Warp instances are live** (`allowOtherInstances` overrides that for a table the others do not write).
-  It copies with JDBC `getObject`/`setObject` (LOBs as bytes or text), so identity/generated columns that refuse explicit values and exotic types are not
+  the hold is **cluster-wide**: the instance doing the move publishes each phase in the control plane (`warp_reshard_gate`, with a lease it keeps renewing), every live
+  Warp instance applies it to its own gate within `WARP_RESHARD_SYNC_MILLIS` (200) and acknowledges (`warp_reshard_ack`) once writes admitted before a freeze have
+  finished, and before writes are released once it has applied the new config version; the mover goes on only when all live instances have acknowledged
+  (`WARP_RESHARD_ACK_SECONDS`, default 60, then it abandons the move and nothing has moved). If the mover dies, the lease (`WARP_RESHARD_LEASE_SECONDS`, 30) runs
+  out and every instance releases the hold. Without the control-plane tables the hold falls back to this process only and a rebalance **refuses to run when other
+  Warp instances are live** (`allowOtherInstances` overrides that). It copies with JDBC `getObject`/`setObject` (LOBs as bytes or text), so identity/generated columns that refuse explicit values and exotic types are not
   supported; the shard key must render as the same text the router sees (integers, strings); the keys of the moving rows are held in memory; each source is
   scanned in full (there is no index on the slot), so writes to the moving slots wait for roughly the time of two scans of the source table; a transaction
-  that wrote to the table before the freeze and commits afterwards is caught by the second-scan check, not waited for. Live (Postgres and MySQL, 20,000 rows,
+  that wrote to the table before the freeze and commits afterwards is caught by the second-scan check, not waited for. When the target already owns slots its copies
+  would be counted next to the originals, so scatter reads of the table also wait during the copy (not when the target is a new, empty member). Live (Postgres and MySQL, 20,000 rows,
   three writers running throughout, 21 of 64 slots moved to a new third shard and 5 moved on again): no acknowledged write lost or duplicated, none failed,
-  every row on the shard that owns its slot, scatter `count(*)` correct; writes to the moving slots were held 44 ms (Postgres) and 305 ms (MySQL). Not run on
-  SQL Server or Oracle (the copy uses plain JDBC, not engine features), with several Warp instances, or with a deliberately failing copy.
+  every row on the shard that owns its slot, and a scatter `count(*)` of the unchanging rows exact on every one of ~330 checks run throughout; writes to the moving slots were
+  held 44 ms (Postgres) and 305 ms (MySQL). With two Warp instances sharing the control plane and the shards (Postgres), writers and scatter counters through both while
+  21 slots moved and 5 moved on again from the other instance: 12,137 acknowledged writes, none lost, duplicated or failed, every scatter count exact; with one instance
+  paused the move was abandoned after the acknowledgement timeout, nothing moved and no write was lost. Not run on SQL Server or Oracle (the copy uses plain JDBC, not
+  engine features), or with a deliberately failing copy.
 - **Shards and replicas.** Each shard is an ordinary backend, so it can have its own replicas and its own failover mode: a keyed read, and each
   member of a scatter-gather read, can be served by that shard's replica, and a shard whose primary fails over does so on its own while the other
   shards keep serving. Live-verified on Postgres and on MySQL (`ShardedReplicaFailoverLiveTest`): two hash shards each with a replica in `promote`

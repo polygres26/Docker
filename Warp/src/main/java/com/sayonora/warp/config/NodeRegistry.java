@@ -79,6 +79,28 @@ public final class NodeRegistry {
         this.nodeId = stableNodeId(this.host, this.adminPort);
     }
 
+    /** This instance's id as it appears in {@code warp_nodes}. */
+    public UUID nodeId() {
+        return nodeId;
+    }
+
+    /** The id this instance will register under, known before the registry object exists. */
+    public static UUID plannedNodeId(int adminPort) {
+        return stableNodeId(resolveHost(), adminPort);
+    }
+
+    /** Ids of the nodes with a heartbeat in the last 30 seconds (the same window as {@link #countLive}). */
+    public static List<UUID> liveNodeIds(com.sayonora.warp.server.ServerOptions options) throws SQLException {
+        List<UUID> ids = new ArrayList<>();
+        try (Connection conn = com.sayonora.warp.pgwire.PgConnections.open(options); Statement st = conn.createStatement();
+                ResultSet rs = st.executeQuery("SELECT node_id FROM warp_nodes WHERE last_heartbeat > now() - interval '30 seconds'")) {
+            while (rs.next()) {
+                ids.add((UUID) rs.getObject(1));
+            }
+        }
+        return ids;
+    }
+
     static UUID stableNodeId(String host, int adminPort) {
         return UUID.nameUUIDFromBytes((host + ":" + adminPort).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }

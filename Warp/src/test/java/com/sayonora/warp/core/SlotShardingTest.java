@@ -67,7 +67,8 @@ class SlotShardingTest {
                 return "orders:slots:customer_id:" + params;
             }
 
-            public void apply(String s) {
+            public long apply(String s) {
+                return 1;
             }
         }, () -> 1);
     }
@@ -163,8 +164,9 @@ class SlotShardingTest {
                 return "orders:hash:customer_id:a,b";
             }
 
-            public void apply(String spec) {
+            public long apply(String spec) {
                 applied[0] = spec;
+                return 1;
             }
         }, () -> 1);
     }
@@ -199,14 +201,15 @@ class SlotShardingTest {
     @Test
     void aMemberWithNoSlotsBelongsToTheGroupAndSurvivesPrintingAndParsing() {
         var s = ShardingStrategy.SlotStrategy.parse("8/s1=0-3;s2=4-7;s3=");
-        assertEquals(List.of("s1", "s2", "s3"), ShardingStrategy.allBackends(s));
+        assertEquals(List.of("s1", "s2"), ShardingStrategy.allBackends(s), "an empty member is not scattered to: it may hold copies of rows that live elsewhere");
+        assertEquals(List.of("s1", "s2", "s3"), ShardingStrategy.groupMembers(s), "but it belongs to the group for schema discovery");
         assertEquals(0, s.slotCounts().get("s3"));
         assertEquals(s, ShardingStrategy.SlotStrategy.parse(s.toParams()));
         assertEquals(s, ShardingStrategy.SlotStrategy.parse("8/stripe:s1,s2").withSpare("s3").equals(s) ? s : s, "sanity");
         var striped = ShardingStrategy.SlotStrategy.parse("8/stripe:s1,s2").withSpare("s3");
         assertFalse(striped.toParams().contains("stripe"));
         assertEquals(striped, ShardingStrategy.SlotStrategy.parse(striped.toParams()));
-        assertEquals(List.of("s1", "s2", "s3"), ShardingStrategy.allBackends(striped));
+        assertEquals(List.of("s1", "s2", "s3"), ShardingStrategy.groupMembers(striped));
         var given = striped.withOwner(List.of(0), "s3");
         assertTrue(given.spareMembers().isEmpty(), "a member that receives a slot is no longer spare");
         assertEquals(striped, striped.withSpare("s3"), "adding twice changes nothing");
