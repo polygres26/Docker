@@ -259,8 +259,13 @@ the Warp user needs superuser or `EXECUTE` on it) and **refuses** unless all of 
 3. **lease:** this instance holds the per-backend lease in the config database
    (`warp_failover_lease`, atomic, expiry on the database clock, `WARP_FAILOVER_LEASE_SECONDS` 120,
    released afterwards) -- so only one instance promotes at a time;
-4. **fence:** if `WARP_FAILOVER_FENCE_COMMAND` is set it is run with `FAILED_PRIMARY_URL` in its
-   environment and must exit 0 (use it to power off / firewall the old primary); a failure aborts;
+4. **fence:** every configured fencer must succeed, in this order, or the promotion is aborted: `WARP_FAILOVER_FENCE_COMMAND` (shell, with
+   `FAILED_PRIMARY_URL` in its environment, exit 0), `WARP_FAILOVER_FENCE_WEBHOOK` (POSTs `{"event":"failover-fence","failedPrimaryUrl":<password-masked>,
+   "host":..,"port":..}`, any 2xx; optional `WARP_FAILOVER_FENCE_WEBHOOK_TOKEN` as a bearer token), `WARP_FAILOVER_FENCE_SSH_TARGET` (e.g. `root@{host}`) with
+   `WARP_FAILOVER_FENCE_SSH_COMMAND` (BatchMode SSH; extra options in `WARP_FAILOVER_FENCE_SSH_OPTS`) and `WARP_FAILOVER_FENCE_EXEC` (an argument vector run
+   without a shell, with `{host}`, `{port}`, `{url}` placeholders, e.g. `docker -H ssh://{host} stop pg1`, `kubectl -n db delete pod pg-0 --wait=true`,
+   `aws ec2 stop-instances --instance-ids i-0abc`). `WARP_FAILOVER_REQUIRE_FENCE=true` refuses to promote at all when none is configured
+   (`promote-blocked` event), which is the setting to use if the old primary could be alive but unreachable from Warp;
 5. a fresh re-probe, after taking the lease, still shows no writable node;
 6. the candidate is the reachable replica that **received the most WAL** (ties: the earlier one in the
    list) and it was within `WARP_FAILOVER_MAX_PROMOTE_LAG_SECONDS` (default 30; negative disables the
@@ -431,7 +436,11 @@ What the guards do **not** cover: a partition that also cuts the replica off fro
 replica then hears nothing, so only the fence command helps, or the majority of Warp instances); two Warp instances with stale
 configuration writing to different nodes inside the fence's window (the lease controls who decides, not who writes); and the config database being a single point (Warp
 fails safe and does not promote without it). Without external fencing the majority rule remains the only protection against promoting while the
-old primary is partitioned away from Warp but serving others. Configure `WARP_FAILOVER_FENCE_COMMAND` if that can happen in your network.
+old primary is partitioned away from Warp but serving others. Configure a fencer (step 4 above) and set `WARP_FAILOVER_REQUIRE_FENCE=true` if that can happen in your network: Warp cannot stop a primary it cannot
+reach, so the fence has to act on the machine, the hypervisor or the network, and only a fence that really stops writes closes this case. Live
+(Postgres, one instance, primary crashed): with the webhook fencer Warp asked exactly once and then promoted; a refusing webhook and a missing fencer
+under `REQUIRE_FENCE` both left the replica unpromoted with a `promote-blocked` event. The SSH fencer was tested against a stand-in `ssh`, the others
+against local processes and an HTTP server; none was run against real infrastructure.
 
 ## Reader port for Relay mode
 
