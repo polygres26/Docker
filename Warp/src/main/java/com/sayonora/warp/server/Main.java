@@ -648,7 +648,7 @@ public final class Main {
             log.warn("rebalancing: the cluster-wide hold is unavailable ({}); a rebalance will need a single live Warp instance", e.toString());
             reshardCoordination = null;
         }
-        metricsServer.setSlotRebalancer(new com.sayonora.warp.core.SlotRebalancer(backendRegistry, routerStage::tableShardRules,
+        com.sayonora.warp.core.SlotRebalancer slotRebalancer = new com.sayonora.warp.core.SlotRebalancer(backendRegistry, routerStage::tableShardRules,
                 new com.sayonora.warp.core.SlotRebalancer.SpecStore() {
                     public String tableShards() {
                         try {
@@ -678,7 +678,20 @@ public final class Main {
                     } catch (Exception e) {
                         throw new IllegalStateException("cannot count live Warp instances: " + e.getMessage(), e);
                     }
-                }, reshardCoordination));
+                }, reshardCoordination);
+        metricsServer.setSlotRebalancer(slotRebalancer);
+        if ("true".equalsIgnoreCase(System.getenv("WARP_AUTO_REBALANCE"))) {
+            try {
+                com.sayonora.warp.core.AutoBalancer autoBalancer = new com.sayonora.warp.core.AutoBalancer(slotRebalancer, ttl -> {
+                    var c = coordinationRef.get();
+                    return c != null && c.tryAcquireLease("auto-balancer", ttl).isPresent();
+                }, com.sayonora.warp.core.AutoBalancer.Settings.fromEnv(System.getenv()));
+                metricsServer.setAutoBalancer(autoBalancer);
+                autoBalancer.start();
+            } catch (RuntimeException e) {
+                log.error("auto-rebalance not started: {}", e.toString());
+            }
+        }
         metricsServer.setAnomalyScheduler(anomalyScheduler);
         {
             var insights = metricsServer.insights();

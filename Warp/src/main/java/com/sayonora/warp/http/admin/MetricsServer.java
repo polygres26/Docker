@@ -89,6 +89,12 @@ public final class MetricsServer {
 
     private volatile com.sayonora.warp.core.SlotRebalancer slotRebalancer;
 
+    private volatile com.sayonora.warp.core.AutoBalancer autoBalancer;
+
+    public void setAutoBalancer(com.sayonora.warp.core.AutoBalancer balancer) {
+        this.autoBalancer = balancer;
+    }
+
     public void setSlotRebalancer(com.sayonora.warp.core.SlotRebalancer rebalancer) {
         this.slotRebalancer = rebalancer;
     }
@@ -887,7 +893,22 @@ public final class MetricsServer {
                     try {
                         if ("/api/sharding".equals(target) && "GET".equals(request.getMethod())) {
                             response.setStatus(HttpServletResponse.SC_OK);
-                            response.getWriter().write(slotRebalancer.describe().toString());
+                            JsonObject described = slotRebalancer.describe();
+                            if (autoBalancer != null) {
+                                described.add("balancer", autoBalancer.status());
+                            }
+                            response.getWriter().write(described.toString());
+                        } else if ("/api/sharding/balancer".equals(target) && "POST".equals(request.getMethod()) && autoBalancer != null) {
+                            JsonObject body = com.google.gson.JsonParser.parseString(new String(request.getInputStream().readAllBytes(),
+                                    java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
+                            autoBalancer.setEnabled(body.get("enabled").getAsBoolean());
+                            response.setStatus(HttpServletResponse.SC_OK);
+                            response.getWriter().write(autoBalancer.status().toString());
+                        } else if ("/api/sharding/balancer/run".equals(target) && "POST".equals(request.getMethod()) && autoBalancer != null) {
+                            JsonObject out = new JsonObject();
+                            out.addProperty("result", autoBalancer.runOnce());
+                            response.setStatus(HttpServletResponse.SC_OK);
+                            response.getWriter().write(out.toString());
                         } else if ("/api/sharding/rebalance".equals(target) && "POST".equals(request.getMethod())) {
                             JsonObject body = com.google.gson.JsonParser.parseString(new String(request.getInputStream().readAllBytes(),
                                     java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();

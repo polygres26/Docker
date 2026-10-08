@@ -608,6 +608,53 @@ public final class SlotRebalancer {
         return slotted(rule(table)).slotCounts();
     }
 
+    /** Names of the slot-sharded tables. */
+    public List<String> slotTables() {
+        List<String> out = new ArrayList<>();
+        for (RouterStage.TableShardRule r : rules.get()) {
+            if (r.strategy() instanceof ShardingStrategy.SlotStrategy) {
+                out.add(r.tableName());
+            }
+        }
+        return out;
+    }
+
+    /** Rows of {@code table} on every shard of its group, empty members included (as 0 when the table is empty there). */
+    public Map<String, Long> shardRowCounts(String table) throws SQLException {
+        RouterStage.TableShardRule rule = rule(table);
+        ShardingStrategy.SlotStrategy s = slotted(rule);
+        Map<String, Long> out = new LinkedHashMap<>();
+        for (String shard : s.slotCounts().keySet()) {
+            BackendTarget t = registry.resolveForRouting(shard);
+            try (Connection c = t.open(); Statement st = c.createStatement(); ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM " + rule.tableName())) {
+                rs.next();
+                out.put(shard, rs.getLong(1));
+            }
+        }
+        return out;
+    }
+
+    /** Rows per slot on {@code shard}, for the slots that shard owns (the rows of other slots there are leftovers, not counted). */
+    public Map<Integer, Long> slotRowCounts(String table, String shard) throws SQLException {
+        RouterStage.TableShardRule rule = rule(table);
+        ShardingStrategy.SlotStrategy s = slotted(rule);
+        Map<Integer, Long> out = new java.util.TreeMap<>();
+        BackendTarget t = registry.resolveForRouting(shard);
+        try (Connection c = t.open(); Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery("SELECT " + rule.column() + ", COUNT(*) FROM " + rule.tableName() + " GROUP BY " + rule.column())) {
+            while (rs.next()) {
+                Object k = rs.getObject(1);
+                if (k != null) {
+                    int slot = s.slotOf(String.valueOf(k));
+                    if (shard.equals(s.owners().get(slot))) {
+                        out.merge(slot, rs.getLong(2), Long::sum);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
     /** Every slot-sharded table with how many slots each shard owns. */
     public com.google.gson.JsonObject describe() {
         com.google.gson.JsonArray tables = new com.google.gson.JsonArray();
