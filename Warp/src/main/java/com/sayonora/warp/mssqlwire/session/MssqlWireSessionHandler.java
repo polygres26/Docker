@@ -208,8 +208,9 @@ public final class MssqlWireSessionHandler implements Runnable {
         // PRELOGIN/LOGIN7 handshake directly over the relayed bytes.
         if (options.mssqlBackendMode() == com.sayonora.warp.server.ServerOptions.MssqlBackendMode.RELAY) {
             try (Socket socket = activeSocket) {
-                com.sayonora.warp.orawire.backend.NativeSessionRelay.relay(
-                        socket, options.mssqlHost(), options.mssqlPort());
+                var target = com.sayonora.warp.core.RelayTargets.primary("WARP_MSSQLWIRE_RELAY", backendRegistry,
+                        options.mssqlHost(), options.mssqlPort(), 1433);
+                com.sayonora.warp.orawire.backend.NativeSessionRelay.relay(socket, target.host(), target.port());
             } catch (IOException e) {
                 log.warn("native mssql relay ended: {}", e.getMessage());
             }

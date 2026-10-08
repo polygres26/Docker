@@ -156,8 +156,9 @@ public final class MySqlWireSessionHandler implements Runnable {
         // reused as-is rather than duplicated for mywire.
         if (options.mySqlBackendMode() == ServerOptions.MySqlBackendMode.RELAY) {
             try (java.net.Socket socket = activeSocket) {
-                com.sayonora.warp.orawire.backend.NativeSessionRelay.relay(
-                        socket, options.mysqlHost(), options.mysqlPort());
+                var target = com.sayonora.warp.core.RelayTargets.primary("WARP_MYWIRE_RELAY", backendRegistry,
+                        options.mysqlHost(), options.mysqlPort(), 3306);
+                com.sayonora.warp.orawire.backend.NativeSessionRelay.relay(socket, target.host(), target.port());
             } catch (IOException e) {
                 log.warn("native mysql relay ended: {}", e.getMessage());
             }

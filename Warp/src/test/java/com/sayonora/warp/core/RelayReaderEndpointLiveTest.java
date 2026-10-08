@@ -84,6 +84,23 @@ class RelayReaderEndpointLiveTest {
                 }
                 assertEquals(2, seen, "a write through the main port reaches the replica read through the reader port");
 
+                // a planned switchover: new connections on the main port follow it, and the reader port moves to the former primary
+                String res = BrownoutHarness.http("POST", "http://localhost:" + warp.metricsPort() + "/api/failover/my/switchover",
+                        "{\"target\":\"" + r.url("shard") + "\"}");
+                assertTrue(res.contains("\"ok\":true"), res);
+                assertEquals(12, serverId(main), "after the switchover the main relay port reaches the new primary");
+                long moved = System.currentTimeMillis() + 30_000;
+                long readerNow = -1;
+                while (readerNow != 11 && System.currentTimeMillis() < moved) {
+                    Thread.sleep(1000);
+                    readerNow = serverId(reader);
+                }
+                assertEquals(11, readerNow, "the reader port now serves from the former primary");
+                res = BrownoutHarness.http("POST", "http://localhost:" + warp.metricsPort() + "/api/failover/my/switchover",
+                        "{\"target\":\"" + p.url("shard") + "\"}");
+                assertTrue(res.contains("\"ok\":true"), res);
+                assertEquals(11, serverId(main), "and back");
+
                 // the replica goes away: the reader port falls back to the primary rather than failing
                 r.stop();
                 Thread.sleep(12_000);
