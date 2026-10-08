@@ -68,8 +68,9 @@ public final class SessionHandler implements Runnable {
         // openDualExecOracleConnection() below, which is a separate feature.
         if (options.oracleBackendMode() == ServerOptions.OracleBackendMode.RELAY) {
             try (Socket socket = clientSocket) {
-                com.sayonora.warp.orawire.backend.NativeSessionRelay.relay(
-                        socket, options.oracleHost(), options.oraclePort());
+                var target = com.sayonora.warp.core.RelayTargets.primary("WARP_ORACLE_RELAY", backendRegistry,
+                        options.oracleHost(), options.oraclePort(), 1521);
+                com.sayonora.warp.orawire.backend.NativeSessionRelay.relay(socket, target.host(), target.port());
             } catch (IOException e) {
                 log.warn("native session relay ended: {}", e.toString());
             }

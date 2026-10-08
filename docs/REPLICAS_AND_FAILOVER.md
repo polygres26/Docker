@@ -443,11 +443,19 @@ cannot be connected to is quarantined and the next one tried. With no replica av
 (`WARP_RELAY_READER_FALLBACK=primary`, the default) or is closed (`refuse`). The replica list is read from the registry at every connection, so
 it follows failovers. Limits: a session on the reader port can read behind its own writes by up to the replica's lag allowance (no
 read-your-writes); a write sent to it reaches a replica and fails with the database's own read-only error (or succeeds if the fallback landed on
-the primary); the main relay port still goes to the single `WARP_ORACLE_HOST`/`WARP_MYSQL_HOST`/`WARP_MSSQL_HOST` and does not follow
-failovers. Live-verified for MySQL (main port reaches the primary, reader port a replica, a write on the reader port is refused, a write on the
+the primary); the main relay port goes to the primary of the same `..._RELAY_BACKEND` (see below), or to the single `WARP_ORACLE_HOST`/`WARP_MYSQL_HOST`/`WARP_MSSQL_HOST`
+when that is not set. Live-verified for MySQL (main port reaches the primary, reader port a replica, a write on the reader port is refused, a write on the
 main port is read on the reader port, and the reader port falls back to the primary when the replica is stopped). Oracle and SQL Server use the
 same protocol-blind code and were only unit-tested (fake servers, URL parsing); a SQL Server secondary may also need `ApplicationIntent=ReadOnly`
 or `ALLOW_CONNECTIONS = ALL`, which the relay cannot add because it does not see the login.
+
+### The main Relay port follows failovers
+
+With `..._RELAY_BACKEND` set (it does not need a reader port), the main relay port connects each new session to that backend's **current primary**
+from the registry instead of the fixed `WARP_*_HOST`/`PORT`, so a failover or switchover redirects new connections without a restart. Sessions already
+open are not moved: they end when the old primary goes away or turns read-only, and the client reconnects to the new one. Live (MySQL relay, planned
+switchover there and back through the admin API): new connections on the main port reached the new primary each time, and the reader port moved to the
+former primary. Not run for Oracle or SQL Server (same code, unit-tested for target resolution only). Without the variable nothing changes.
 
 ## Metrics and alerts
 
