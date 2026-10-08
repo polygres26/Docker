@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sayonora.warp.testsupport.BrownoutHarness;
 import com.sayonora.warp.testsupport.LocalPostgres;
+import com.sayonora.warp.testsupport.ShardCluster;
 import com.sayonora.warp.testsupport.WarpProcess;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,50 +29,30 @@ import org.junit.jupiter.api.Test;
  */
 class AutoRebalanceLiveTest {
 
-    private static long count(LocalPostgres p) throws Exception {
-        try (Connection c = p.conn(); Statement st = c.createStatement(); ResultSet rs = st.executeQuery("select count(*) from orders")) {
-            rs.next();
-            return rs.getLong(1);
-        }
-    }
-
-    private static Set<Long> ids(LocalPostgres p) throws Exception {
-        Set<Long> out = new HashSet<>();
-        try (Connection c = p.conn(); Statement st = c.createStatement(); ResultSet rs = st.executeQuery("select id from orders")) {
-            while (rs.next()) {
-                out.add(rs.getLong(1));
-            }
-        }
-        return out;
-    }
-
-    private static double spread(LocalPostgres[] pg) throws Exception {
+    private static double spread(ShardCluster c) throws Exception {
         long min = Long.MAX_VALUE;
         long max = 0;
         long total = 0;
-        for (LocalPostgres p : pg) {
-            long n = count(p);
+        for (int i = 0; i < 3; i++) {
+            long n = c.count(i);
             min = Math.min(min, n);
             max = Math.max(max, n);
             total += n;
         }
-        return (max - min) / ((double) total / pg.length);
+        return (max - min) / ((double) total / 3);
     }
 
-    private void run(String threshold, boolean expectBalanced, boolean pause) throws Exception {
+    private void run(String engine, String threshold, boolean expectBalanced, boolean pause) throws Exception {
+        Assumptions.assumeTrue(ShardCluster.available(engine), "engine " + engine + " is not available here");
         String bin = System.getenv("WARP_TEST_BROWNOUT_PG_BIN");
-        Assumptions.assumeTrue(bin != null && !bin.isBlank(), "set WARP_TEST_BROWNOUT_PG_BIN");
         Path dir = Files.createTempDirectory("autoreb");
         LocalPostgres cfg = LocalPostgres.primary(bin, dir, "cfg", LocalPostgres.freePort());
-        LocalPostgres[] pg = new LocalPostgres[3];
-        try {
+        try (ShardCluster cluster = ShardCluster.start(engine, dir)) {
             for (int i = 0; i < 3; i++) {
-                pg[i] = LocalPostgres.primary(bin, dir, "s" + i, LocalPostgres.freePort());
-                try (Connection c = pg[i].conn(); Statement st = c.createStatement()) {
-                    st.execute("create table orders (id int primary key, customer_id int, amount int)");
-                }
+                cluster.createOrders(i);
             }
-            String spec = "default=" + cfg.url() + "|warp|secret;s1=" + pg[0].url() + "|warp|secret;s2=" + pg[1].url() + "|warp|secret;s3=" + pg[2].url() + "|warp|secret";
+            String spec = "default=" + cfg.url() + "|warp|secret;" + cluster.shard(0).backendSpec("s1") + ";" + cluster.shard(1).backendSpec("s2") + ";"
+                    + cluster.shard(2).backendSpec("s3");
             try (WarpProcess warp = WarpProcess.builder().pgBackend("127.0.0.1", cfg.port(), "postgres", "warp", "secret")
                     .frontend("pgwire", "WARP_PGWIRE_PORT")
                     .env("WARP_BACKENDS", spec)
@@ -100,7 +81,7 @@ class AutoRebalanceLiveTest {
                         st.executeUpdate("insert into orders (id, customer_id, amount) values " + v);
                     }
                 }
-                assertEquals(0, count(pg[2]));
+                assertEquals(0, cluster.count(2));
                 AtomicBoolean stop = new AtomicBoolean();
                 AtomicLong next = new AtomicLong(100_000);
                 AtomicLong failed = new AtomicLong();
@@ -128,18 +109,18 @@ class AutoRebalanceLiveTest {
                 long deadline = System.currentTimeMillis() + (expectBalanced ? 90_000 : 12_000);
                 while (System.currentTimeMillis() < deadline) {
                     Thread.sleep(1000);
-                    if (expectBalanced && spread(pg) <= 0.25) {
+                    if (expectBalanced && spread(cluster) <= 0.25) {
                         break;
                     }
                 }
                 String status = BrownoutHarness.http("GET", admin + "/api/sharding", null);
-                System.out.println("AUTO-NOTE threshold=" + threshold + " pause=" + pause + " rows " + count(pg[0]) + "/" + count(pg[1]) + "/" + count(pg[2])
+                System.out.println("AUTO-NOTE threshold=" + threshold + " pause=" + pause + " rows " + cluster.count(0) + "/" + cluster.count(1) + "/" + cluster.count(2)
                         + " status " + status.substring(status.indexOf("\"balancer\""), Math.min(status.length(), status.indexOf("\"balancer\"") + 330)));
                 if (expectBalanced) {
-                    assertTrue(spread(pg) <= 0.25, "the shards are within the threshold: spread " + spread(pg));
-                    assertTrue(count(pg[2]) > 2000, "the new shard was filled");
+                    assertTrue(spread(cluster) <= 0.25, "the shards are within the threshold: spread " + spread(cluster));
+                    assertTrue(cluster.count(2) > 2000, "the new shard was filled");
                 } else {
-                    assertEquals(0, count(pg[2]), "nothing moved");
+                    assertEquals(0, cluster.count(2), "nothing moved");
                 }
                 Thread.sleep(8000); // and it stays put once balanced
                 String mapAfter = BrownoutHarness.http("GET", admin + "/api/sharding", null);
@@ -149,8 +130,8 @@ class AutoRebalanceLiveTest {
                 }
                 Set<Long> everything = new HashSet<>();
                 long rows = 0;
-                for (LocalPostgres p : pg) {
-                    Set<Long> here = ids(p);
+                for (int i = 0; i < 3; i++) {
+                    Set<Long> here = cluster.ids(i);
                     rows += here.size();
                     everything.addAll(here);
                 }
@@ -161,32 +142,38 @@ class AutoRebalanceLiveTest {
                 assertEquals(Set.of(), lost);
                 assertEquals(0, failed.get());
                 if (expectBalanced) {
-                    assertTrue(spread(pg) <= 0.30, "still balanced at the end");
+                    assertTrue(spread(cluster) <= 0.30, "still balanced at the end");
                 }
                 assertTrue(mapAfter.contains("slotsPerShard"));
             }
         } finally {
-            for (LocalPostgres p : pg) {
-                if (p != null) {
-                    p.stop("immediate");
-                }
-            }
             cfg.stop("immediate");
         }
     }
 
     @Test
-    void aNewEmptyShardFillsByItselfWhileWritesContinue() throws Exception {
-        run("0.2", true, false);
+    void postgresANewEmptyShardFillsByItselfWhileWritesContinue() throws Exception {
+        run("postgres", "0.2", true, false);
     }
 
     @Test
-    void nothingMovesWhenTheImbalanceIsWithinTheThreshold() throws Exception {
-        run("5.0", false, false);
+    void mysqlANewEmptyShardFillsByItselfWhileWritesContinue() throws Exception {
+        run("mysql", "0.2", true, false);
     }
 
     @Test
-    void nothingMovesWhileTheBalancerIsPaused() throws Exception {
-        run("0.2", false, true);
+    void sqlServerANewEmptyShardFillsByItselfWhileWritesContinue() throws Exception {
+        run("mssql", "0.2", true, false);
+    }
+
+    @Test
+    void oracleANewEmptyShardFillsByItselfWhileWritesContinue() throws Exception {
+        run("oracle", "0.2", true, false);
+    }
+
+    @Test
+    void postgresNothingMovesWhenTheImbalanceIsWithinTheThresholdOrWhilePaused() throws Exception {
+        run("postgres", "5.0", false, false);
+        run("postgres", "0.2", false, true);
     }
 }

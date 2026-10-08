@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sayonora.warp.testsupport.BrownoutHarness;
 import com.sayonora.warp.testsupport.LocalPostgres;
+import com.sayonora.warp.testsupport.ShardCluster;
 import com.sayonora.warp.testsupport.WarpProcess;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,31 +19,16 @@ import org.junit.jupiter.api.Test;
 /** An existing hash-sharded table is converted to slots without moving a row, then takes a third shard. Opt-in: WARP_TEST_BROWNOUT_PG_BIN. */
 class HashToSlotsLiveTest {
 
-    private static long count(LocalPostgres p) throws Exception {
-        try (Connection c = p.conn(); Statement st = c.createStatement(); ResultSet rs = st.executeQuery("select count(*) from orders")) {
-            rs.next();
-            return rs.getLong(1);
-        }
-    }
-
-    @Test
-    void aHashTableConvertsInPlaceAndThenRebalances() throws Exception {
+    private void run(String engine) throws Exception {
+        Assumptions.assumeTrue(ShardCluster.available(engine), "engine " + engine + " is not available here");
         String bin = System.getenv("WARP_TEST_BROWNOUT_PG_BIN");
-        Assumptions.assumeTrue(bin != null && !bin.isBlank(), "set WARP_TEST_BROWNOUT_PG_BIN");
         Path dir = Files.createTempDirectory("hash2slots");
         LocalPostgres cfg = LocalPostgres.primary(bin, dir, "cfg", LocalPostgres.freePort());
-        LocalPostgres[] pg = new LocalPostgres[3];
-        try {
-            for (int i = 0; i < 3; i++) {
-                pg[i] = LocalPostgres.primary(bin, dir, "s" + i, LocalPostgres.freePort());
-                if (i < 2) { // the third shard gets its table only when it is about to join
-                    try (Connection c = pg[i].conn(); Statement st = c.createStatement()) {
-                        st.execute("create table orders (id int primary key, customer_id int, amount int)");
-                    }
-                }
-            }
-            String spec = "default=" + cfg.url() + "|warp|secret;s1=" + pg[0].url() + "|warp|secret;s2=" + pg[1].url() + "|warp|secret;s3=" + pg[2].url()
-                    + "|warp|secret";
+        try (ShardCluster cluster = ShardCluster.start(engine, dir)) {
+            cluster.createOrders(0); // the third shard gets its table only when it is about to join
+            cluster.createOrders(1);
+            String spec = "default=" + cfg.url() + "|warp|secret;" + cluster.shard(0).backendSpec("s1") + ";" + cluster.shard(1).backendSpec("s2") + ";"
+                    + cluster.shard(2).backendSpec("s3");
             try (WarpProcess warp = WarpProcess.builder().pgBackend("127.0.0.1", cfg.port(), "postgres", "warp", "secret")
                     .frontend("pgwire", "WARP_PGWIRE_PORT")
                     .env("WARP_BACKENDS", spec)
@@ -61,8 +47,8 @@ class HashToSlotsLiveTest {
                         st.executeUpdate("insert into orders (id, customer_id, amount) values " + v);
                     }
                 }
-                long before1 = count(pg[0]);
-                long before2 = count(pg[1]);
+                long before1 = cluster.count(0);
+                long before2 = cluster.count(1);
                 assertEquals(5000, before1 + before2);
 
                 try (Connection c = DriverManager.getConnection(url, "warp", "secret"); Statement st = c.createStatement();
@@ -76,8 +62,8 @@ class HashToSlotsLiveTest {
                 String res = BrownoutHarness.http("POST", admin + "/api/sharding/convert", "{\"table\":\"orders\"}");
                 System.out.println("HASH2SLOTS-NOTE " + res);
                 assertTrue(res.contains("\"rowsMoved\":0") && res.contains("stripe:s1,s2"), res);
-                assertEquals(before1, count(pg[0]), "no row moved");
-                assertEquals(before2, count(pg[1]));
+                assertEquals(before1, cluster.count(0), "no row moved");
+                assertEquals(before2, cluster.count(1));
                 try (Connection c = DriverManager.getConnection(url, "warp", "secret"); Statement st = c.createStatement()) {
                     for (int i = 1; i <= 5000; i += 37) {
                         try (ResultSet rs = st.executeQuery("select count(*) from orders where customer_id = " + i)) {
@@ -88,9 +74,7 @@ class HashToSlotsLiveTest {
                     assertEquals(1, st.executeUpdate("insert into orders (id, customer_id, amount) values (900001, 900001, 1)"));
                 }
 
-                try (Connection c = pg[2].conn(); Statement st = c.createStatement()) {
-                    st.execute("create table orders (id int primary key, customer_id int, amount int)");
-                }
+                cluster.createOrders(2);
                 // the table now exists on a backend that is not part of the group: until it joins, queries on it are ambiguous
                 res = BrownoutHarness.http("POST", admin + "/api/sharding/add-shard", "{\"table\":\"orders\",\"shard\":\"s3\"}");
                 assertTrue(res.contains("s3="), res);
@@ -102,8 +86,8 @@ class HashToSlotsLiveTest {
                 res = BrownoutHarness.http("POST", admin + "/api/sharding/rebalance", "{\"table\":\"orders\",\"to\":\"s3\",\"count\":300}");
                 System.out.println("HASH2SLOTS-NOTE " + res);
                 assertTrue(res.contains("\"rowsCopied\""), res);
-                assertEquals(5001, count(pg[0]) + count(pg[1]) + count(pg[2]));
-                assertTrue(count(pg[2]) > 0);
+                assertEquals(5001, cluster.count(0) + cluster.count(1) + cluster.count(2));
+                assertTrue(cluster.count(2) > 0);
                 try (Connection c = DriverManager.getConnection(url, "warp", "secret"); Statement st = c.createStatement()) {
                     for (int i = 1; i <= 5000; i += 41) {
                         try (ResultSet rs = st.executeQuery("select count(*) from orders where customer_id = " + i)) {
@@ -118,12 +102,27 @@ class HashToSlotsLiveTest {
                 }
             }
         } finally {
-            for (LocalPostgres p : pg) {
-                if (p != null) {
-                    p.stop("immediate");
-                }
-            }
             cfg.stop("immediate");
         }
+    }
+
+    @Test
+    void postgresAHashTableConvertsInPlaceAndThenRebalances() throws Exception {
+        run("postgres");
+    }
+
+    @Test
+    void mysqlAHashTableConvertsInPlaceAndThenRebalances() throws Exception {
+        run("mysql");
+    }
+
+    @Test
+    void sqlServerAHashTableConvertsInPlaceAndThenRebalances() throws Exception {
+        run("mssql");
+    }
+
+    @Test
+    void oracleAHashTableConvertsInPlaceAndThenRebalances() throws Exception {
+        run("oracle");
     }
 }
