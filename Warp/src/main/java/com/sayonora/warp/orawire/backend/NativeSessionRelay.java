@@ -15,7 +15,12 @@ public final class NativeSessionRelay {
     }
 
     public static void relay(Socket clientSocket, String backendHost, int backendPort) throws IOException {
-        try (Socket backendSocket = new Socket(backendHost, backendPort)) {
+        relay(clientSocket, new Socket(backendHost, backendPort));
+    }
+
+    /** As above, over an already connected backend socket (closed when the session ends). */
+    public static void relay(Socket clientSocket, Socket connectedBackend) throws IOException {
+        try (Socket backendSocket = connectedBackend) {
             InputStream clientIn = clientSocket.getInputStream();
             OutputStream clientOut = clientSocket.getOutputStream();
             InputStream backendIn = backendSocket.getInputStream();

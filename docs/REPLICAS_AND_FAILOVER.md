@@ -433,6 +433,22 @@ configuration writing to different nodes inside the fence's window (the lease co
 fails safe and does not promote without it). Without external fencing the majority rule remains the only protection against promoting while the
 old primary is partitioned away from Warp but serving others. Configure `WARP_FAILOVER_FENCE_COMMAND` if that can happen in your network.
 
+## Reader port for Relay mode
+
+A `RELAY` frontend is a raw-byte pipe to one database, so reads cannot be told from writes. Instead the choice is made per connection by the
+port the client dials. Set, per protocol, `WARP_ORACLE_RELAY_READ_PORT` / `WARP_MYWIRE_RELAY_READ_PORT` / `WARP_MSSQLWIRE_RELAY_READ_PORT` and
+the matching `..._RELAY_BACKEND` (the `WARP_BACKENDS` entry whose replicas serve it). Each connection to the reader port is relayed to the
+next lag-eligible replica of that backend, with the same eligibility, round-robin and quarantine as statement-level routing: a replica that
+cannot be connected to is quarantined and the next one tried. With no replica available the connection goes to the primary
+(`WARP_RELAY_READER_FALLBACK=primary`, the default) or is closed (`refuse`). The replica list is read from the registry at every connection, so
+it follows failovers. Limits: a session on the reader port can read behind its own writes by up to the replica's lag allowance (no
+read-your-writes); a write sent to it reaches a replica and fails with the database's own read-only error (or succeeds if the fallback landed on
+the primary); the main relay port still goes to the single `WARP_ORACLE_HOST`/`WARP_MYSQL_HOST`/`WARP_MSSQL_HOST` and does not follow
+failovers. Live-verified for MySQL (main port reaches the primary, reader port a replica, a write on the reader port is refused, a write on the
+main port is read on the reader port, and the reader port falls back to the primary when the replica is stopped). Oracle and SQL Server use the
+same protocol-blind code and were only unit-tested (fake servers, URL parsing); a SQL Server secondary may also need `ApplicationIntent=ReadOnly`
+or `ALLOW_CONNECTIONS = ALL`, which the relay cannot add because it does not see the login.
+
 ## Metrics and alerts
 
 `GET /metrics` now includes (labels `backend` = the primary's name, `replica` = replica URL with credentials masked):
@@ -459,7 +475,8 @@ as YAML but not run through `promtool` or a live Prometheus.
   `WARP_STANDBY_HOST` mechanism, not this one.
 - `BackendHealthChecker` still marks a backend DOWN after one failed connect; that is independent of
   failover-follow, which needs a confirmed window.
-- Relay mode and the orawire emulation path have no replica routing (no session-state predicate there).
+- Relay mode (Oracle, MySQL, SQL Server) cannot route per statement, because a raw-byte relay does not parse the protocol; use a reader port
+  instead (below). The orawire emulation path has no replica routing (no session-state predicate there).
 
 ## Running the live tests
 
