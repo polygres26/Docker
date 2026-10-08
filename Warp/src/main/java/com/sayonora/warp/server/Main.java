@@ -659,11 +659,10 @@ public final class Main {
                     }
 
                     public long apply(String newTableShards) throws Exception {
-                        WarpConfig latest = configStore.readLatest().map(v -> v.payload()).orElse(config);
-                        WarpConfig next = latest.withRouterTableShards(newTableShards);
-                        long version = configStore.write(next);
-                        routerStage.reconfigure(next.routerSchemaRules(), next.routerPredicateRules(), next.routerValueShardRules(),
-                                next.routerShardTables(), next.routerTableShards());
+                        WarpConfig[] next = new WarpConfig[1];
+                        long version = configStore.update(latest -> next[0] = latest.withRouterTableShards(newTableShards)).orElseThrow();
+                        routerStage.reconfigure(next[0].routerSchemaRules(), next[0].routerPredicateRules(), next[0].routerValueShardRules(),
+                                next[0].routerShardTables(), next[0].routerTableShards());
                         return version;
                     }
                 }, () -> {

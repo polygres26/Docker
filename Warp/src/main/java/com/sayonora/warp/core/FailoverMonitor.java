@@ -552,6 +552,9 @@ public final class FailoverMonitor {
      * a second writer. Allowed in any failover mode except {@code off}.
      */
     public SwitchoverResult switchover(String backend, String targetUrl) {
+        if (ReshardGate.INSTANCE.active()) {
+            return new SwitchoverResult(false, "slots of a sharded table are being moved in this process; retry the switchover when the rebalance has finished");
+        }
         switchoversInProgress.add(backend);
         try {
             return doSwitchover(backend, targetUrl);

@@ -243,6 +243,10 @@ public final class SlotRebalancer {
         var lease = keepAlive(table);
         try {
             probeTable(target, table);
+            Set<String> involved = new java.util.LinkedHashSet<>(plan.slotsBySource().keySet());
+            involved.add(plan.to());
+            requireWritable(involved);
+            Map<String, String> startPrimaries = primaryUrls(involved);
             if (!before.owners().contains(plan.to()) && !before.spareMembers().contains(plan.to())) {
                 // join the group first, so the table existing on the new backend is not an ambiguity for queries while the rows are copied
                 store.apply(replaceEntry(store.tableShards(), table, keyColumn, before.withSpare(plan.to()).toParams()));
@@ -284,6 +288,10 @@ public final class SlotRebalancer {
             }
             dropStaging(target, table);
             staged = false;
+            awaitReplicasApplied(plan.to(), true); // reads routed to the target's replicas must find the rows before the map says they live there
+            if (!primaryUrls(involved).equals(startPrimaries)) {
+                throw new IllegalStateException("the primary of a shard involved changed during the move (a failover); nothing was switched, retry");
+            }
             long version = store.apply(replaceEntry(store.tableShards(), table, keyColumn, after.toParams()));
             flipped = true;
             phase(ReshardCoordinator.Phase.FLIP, table, moving, true, version);
@@ -298,6 +306,9 @@ public final class SlotRebalancer {
                 warning = "the slots moved, but removing the old copies failed (" + e.getMessage() + "); rows of the moved slots are duplicated on "
                         + plan.slotsBySource().keySet() + " until POST /api/sharding/purge {table, shard} finishes the job";
                 log.error("rebalance of {}: {}", table, warning);
+            }
+            for (String source : plan.slotsBySource().keySet()) {
+                awaitReplicasApplied(source, false); // scatter reads wait until the sources' replicas no longer show the moved rows
             }
             log.warn("rebalance of {}: moved {} slots to {} ({} rows copied, {} removed from the sources, writes to the moving slots held {} ms)", table,
                     moving.size(), plan.to(), copied, removed, heldMillis);
@@ -350,7 +361,9 @@ public final class SlotRebalancer {
         try {
             held = true;
             phase(ReshardCoordinator.Phase.SCATTER, rule.tableName(), List.of(), true, 0);
-            return purgeUnowned(t, shard, rule.tableName(), rule.column(), s);
+            long removed = purgeUnowned(t, shard, rule.tableName(), rule.column(), s);
+            awaitReplicasApplied(shard, false);
+            return removed;
         } finally {
             if (held) {
                 try {
@@ -548,6 +561,82 @@ public final class SlotRebalancer {
             in.rollback();
         }
         return new long[] {rows, sum};
+    }
+
+    // ---- HA: failover and replicas ---------------------------------------------------------------------------------------------------------
+
+    private static long replicaWaitMillis() {
+        try {
+            String v = System.getenv("WARP_REBALANCE_REPLICA_WAIT_SECONDS");
+            return (v == null || v.isBlank() ? 120 : Long.parseLong(v.trim())) * 1000L;
+        } catch (NumberFormatException e) {
+            return 120_000;
+        }
+    }
+
+    /** Every shard involved must have a primary that accepts writes now: a move started in the middle of a failover would copy from or to a node about to go. */
+    private void requireWritable(Collection<String> shards) {
+        for (String shard : shards) {
+            BackendTarget t = registry.resolveForRouting(shard);
+            EngineHa ha = t == null ? null : EngineHa.forDialect(t.dialect());
+            if (ha != null && ha.role(t) != FailoverMonitor.NodeRole.WRITABLE) {
+                throw new IllegalStateException("the primary of shard '" + shard + "' is not accepting writes (a failover may be in progress); not starting");
+            }
+        }
+    }
+
+    private Map<String, String> primaryUrls(Collection<String> shards) {
+        Map<String, String> urls = new LinkedHashMap<>();
+        for (String shard : shards) {
+            BackendTarget t = registry.resolveForRouting(shard);
+            urls.put(shard, t == null ? "" : t.jdbcUrl());
+        }
+        return urls;
+    }
+
+    /**
+     * Waits until every replica of {@code shard} has applied what its primary has written so far, so that a read routed to a replica sees the rows
+     * just published to, or deleted from, the shard. A replica that does not get there in time makes the move fail ({@code strict}) or is taken out of
+     * read routing for a while with a warning. Engines that cannot report a log position fall back to a fixed pause.
+     */
+    private void awaitReplicasApplied(String shard, boolean strict) throws Exception {
+        List<ReplicaRouter.Replica> replicas = registry.replicaRouter().replicasOf(shard);
+        if (replicas.isEmpty()) {
+            return;
+        }
+        BackendTarget primary = registry.resolveForRouting(shard);
+        EngineHa ha = EngineHa.forDialect(primary.dialect());
+        java.util.Optional<java.math.BigInteger> mark = ha == null ? java.util.Optional.empty() : ha.writePosition(primary);
+        if (mark.isEmpty()) {
+            Thread.sleep(Math.min(replicaWaitMillis(), 5_000));
+            return;
+        }
+        long deadline = System.currentTimeMillis() + replicaWaitMillis();
+        for (ReplicaRouter.Replica replica : replicas) {
+            boolean caughtUp = false;
+            while (System.currentTimeMillis() < deadline) {
+                java.util.Optional<java.math.BigInteger> applied;
+                try {
+                    applied = ha.appliedPosition(replica.target());
+                } catch (Exception e) {
+                    applied = java.util.Optional.empty(); // a replica that cannot be asked is not serving reads either
+                }
+                if (applied.isPresent() && applied.get().compareTo(mark.get()) >= 0) {
+                    caughtUp = true;
+                    break;
+                }
+                Thread.sleep(100);
+            }
+            if (!caughtUp) {
+                String why = "replica " + BackendSetModel.maskUrl(replica.target().jdbcUrl()) + " of shard '" + shard + "' had not applied the move after "
+                        + replicaWaitMillis() / 1000 + " s";
+                if (strict) {
+                    throw new IllegalStateException(why + "; nothing was switched");
+                }
+                registry.replicaRouter().quarantine(replica, why);
+                log.warn("rebalance: {}; it is out of read routing for a while", why);
+            }
+        }
     }
 
     private static String stagingName(String table) {

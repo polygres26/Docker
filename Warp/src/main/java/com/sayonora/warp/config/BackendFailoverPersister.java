@@ -30,16 +30,21 @@ public final class BackendFailoverPersister implements FailoverMonitor.Persister
     public boolean persist(String backend, String expectedOldUrl, String newPrimaryUrl, List<ReplicaSpec> newReplicas)
             throws Exception {
         synchronized (WRITE_LOCK) {
-            WarpConfig before = configStore.readLatest().map(ConfigStore.Version::payload)
-                    .orElseGet(WarpConfig::fromEnvDefaults);
-            BackendSetModel model = BackendSetModel.from(before, null);
-            BackendSetModel.Backend current = model.backend(backend);
-            if (current == null || !current.url().equals(expectedOldUrl)) {
+            WarpConfig[] written = new WarpConfig[1];
+            configStore.update(before -> {
+                BackendSetModel model = BackendSetModel.from(before, null);
+                BackendSetModel.Backend current = model.backend(backend);
+                if (current == null || !current.url().equals(expectedOldUrl)) {
+                    return null;
+                }
+                model.patchBackend(backend, newPrimaryUrl, null, null, false, null, null, ReplicaSpec.format(newReplicas));
+                written[0] = model.applyTo(before);
+                return written[0];
+            });
+            if (written[0] == null) {
                 return false;
             }
-            model.patchBackend(backend, newPrimaryUrl, null, null, false, null, null, ReplicaSpec.format(newReplicas));
-            WarpConfig after = model.applyTo(before);
-            configStore.write(after);
+            WarpConfig after = written[0];
             registry.reload(after.backends(), after.shardBackends(), after.backendSets(), after.backendGroups());
             registry.applyStoreConfig(after.backendStores(), after.backendSetNames());
             return true;
