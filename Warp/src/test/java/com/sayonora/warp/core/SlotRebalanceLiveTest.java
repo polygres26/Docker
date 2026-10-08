@@ -148,6 +148,9 @@ class SlotRebalanceLiveTest {
             // back again: everything s3 got goes home, still under write load
             res = BrownoutHarness.http("POST", admin + "/api/sharding/rebalance", "{\"table\":\"orders\",\"to\":\"s1\",\"slots\":[21,22,23,24,25]}");
             System.out.println("SLOT-NOTE " + engine + " second rebalance: " + res);
+            JsonObject second = JsonParser.parseString(res).getAsJsonObject();
+            assertTrue(second.get("scatterReadsHeldMillis").getAsLong() <= second.get("writesHeldMillis").getAsLong(),
+                    "scatter reads wait for less than the writes do (the copy is staged): " + res);
             Thread.sleep(1500);
             stop.set(true);
             for (Thread t : writers) {
