@@ -338,12 +338,18 @@ public sealed interface ShardingStrategy {
             case ListStrategy ls -> distinct(ls.valueToBackend().values());
             case RangeStrategy rs -> distinct(rs.ranges().stream().map(RangeEntry::backend).toList());
             case DateRangeStrategy ds -> distinct(ds.ranges().stream().map(DateRangeEntry::backend).toList());
-            case SlotStrategy ss -> {
-                List<String> all = new ArrayList<>(ss.owners());
-                all.addAll(ss.spareMembers());
-                yield distinct(all);
-            }
+            // spare members are NOT scattered to: they may hold copies of rows that still live on their owner
+            case SlotStrategy ss -> distinct(ss.owners());
         };
+    }
+
+    /** Every backend that belongs to the table's group for schema discovery: {@link #allBackends} plus slot members that own nothing yet. */
+    static List<String> groupMembers(ShardingStrategy strategy) {
+        List<String> all = new ArrayList<>(allBackends(strategy));
+        if (strategy instanceof SlotStrategy ss) {
+            all.addAll(ss.spareMembers());
+        }
+        return distinct(all);
     }
 
     private static List<String> distinct(java.util.Collection<String> values) {

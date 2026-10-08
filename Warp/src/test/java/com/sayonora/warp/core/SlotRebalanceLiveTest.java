@@ -108,6 +108,31 @@ class SlotRebalanceLiveTest {
                 t.start();
                 writers.add(t);
             }
+            // the new backend already holds the (empty) table, so it joins the group before anything is asked of the table
+            assertTrue(BrownoutHarness.http("POST", admin + "/api/sharding/add-shard", "{\"table\":\"orders\",\"shard\":\"s3\"}").contains("s3="));
+            // a scatter read of the rows that never change must always see each of them exactly once, also while rows are being copied
+            AtomicLong wrongCounts = new AtomicLong();
+            AtomicLong countChecks = new AtomicLong();
+            Thread counter = new Thread(() -> {
+                try (Connection c = DriverManager.getConnection(url, "warp", "secret"); Statement st = c.createStatement()) {
+                    while (!stop.get()) {
+                        try (ResultSet rs = st.executeQuery("select count(*) from orders where id <= 20000")) {
+                            rs.next();
+                            countChecks.incrementAndGet();
+                            if (rs.getLong(1) != 20_000) {
+                                wrongCounts.incrementAndGet();
+                                System.out.println("SLOT-NOTE scatter count saw " + rs.getLong(1));
+                            }
+                        }
+                        Thread.sleep(10);
+                    }
+                } catch (Exception e) {
+                    wrongCounts.incrementAndGet();
+                    System.out.println("SLOT-NOTE counter failed: " + e);
+                }
+            });
+            counter.start();
+            writers.add(counter);
             Thread.sleep(1500);
             String dry = BrownoutHarness.http("POST", admin + "/api/sharding/rebalance", "{\"table\":\"orders\",\"to\":\"s3\",\"count\":21,\"dryRun\":true}");
             assertTrue(dry.contains("\"dryRun\":true") && dry.contains("\"slotsToMove\":21"), dry);
@@ -152,6 +177,9 @@ class SlotRebalanceLiveTest {
             System.out.println("SLOT-RESULT " + engine + " | acked " + acked.size() + " | rows " + rows + " | lost " + lost.size() + " | failed writes " + failed.get()
                     + " | map " + mapText + " | s1/s2/s3 = " + held.get("s1").size() + "/" + held.get("s2").size() + "/" + held.get("s3").size());
             assertEquals(Set.of(), lost, "no acknowledged write is missing");
+            System.out.println("SLOT-NOTE " + engine + " scatter counts checked " + countChecks.get() + " times during the moves, wrong " + wrongCounts.get());
+            assertTrue(countChecks.get() > 20, "the counter ran");
+            assertEquals(0, wrongCounts.get(), "a scatter read never saw a moved row twice or missed one");
             assertEquals(0, failed.get(), "writes waited for the slots they needed instead of failing");
             assertTrue(held.get("s3").size() > 0, "s3 keeps part of the table");
             try (Connection c = DriverManager.getConnection(url, "warp", "secret"); Statement st = c.createStatement();

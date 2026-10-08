@@ -173,6 +173,14 @@ public final class SlotRebalancer {
             if (!gate.awaitDrained(table, 60_000)) {
                 throw new IllegalStateException("writes admitted before the freeze did not finish within 60 s");
             }
+            if (before.owners().contains(plan.to())) {
+                // The target already owns slots, so it is read by scatter queries and its copies of the moving rows would be counted twice
+                // next to the originals: scatter reads of this table wait from here until the old copies are gone.
+                gate.blockScatter(table, true);
+                if (!gate.awaitScatterDrained(table, 60_000)) {
+                    throw new IllegalStateException("scatter reads admitted before the copy did not finish within 60 s");
+                }
+            }
             purgeUnowned(target, plan.to(), table, keyColumn, before); // leftovers of an earlier failed attempt
             Map<String, long[]> firstScan = new LinkedHashMap<>();
             for (Map.Entry<String, List<Integer>> e : plan.slotsBySource().entrySet()) {
@@ -194,6 +202,9 @@ public final class SlotRebalancer {
                 }
             }
             gate.blockScatter(table, true);
+            if (!gate.awaitScatterDrained(table, 60_000)) {
+                throw new IllegalStateException("scatter reads admitted before the switch did not finish within 60 s");
+            }
             store.apply(replaceEntry(store.tableShards(), table, keyColumn, after.toParams()));
             flipped = true;
             gate.thaw(table);
