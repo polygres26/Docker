@@ -26,6 +26,19 @@ public interface EngineHa {
      * less data lost if promoted); empty when it cannot be determined. */
     OptionalLong walPosition(BackendTarget replica) throws Exception;
 
+    /**
+     * The primary's current log position, in the same scale as {@link #appliedPosition} on a replica of it. A session records it right after
+     * one of its writes; a replica whose applied position has reached it holds that write. Empty when the engine cannot say.
+     */
+    default java.util.Optional<java.math.BigInteger> writePosition(BackendTarget primary) throws Exception {
+        return java.util.Optional.empty();
+    }
+
+    /** How far this replica has APPLIED (not merely received) the primary's log, comparable with {@link #writePosition}. */
+    default java.util.Optional<java.math.BigInteger> appliedPosition(BackendTarget replica) throws Exception {
+        return java.util.Optional.empty();
+    }
+
     /** Promotes {@code replica} to a writable primary, returning only once it accepts writes. Must
      * throw rather than risk losing data it already received. */
     void promote(BackendTarget replica) throws Exception;

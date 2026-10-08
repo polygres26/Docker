@@ -195,6 +195,24 @@ final class SqlServerHa implements EngineHa {
         }
     }
 
+    @Override
+    public java.util.Optional<java.math.BigInteger> writePosition(BackendTarget primary) throws SQLException {
+        return lsn(primary, "last_commit_lsn");
+    }
+
+    @Override
+    public java.util.Optional<java.math.BigInteger> appliedPosition(BackendTarget replica) throws SQLException {
+        return lsn(replica, "last_commit_lsn");
+    }
+
+    private java.util.Optional<java.math.BigInteger> lsn(BackendTarget n, String column) throws SQLException {
+        try (Connection c = connect(n); Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery("SELECT TOP 1 CAST(" + column + " AS decimal(25,0)) FROM sys.dm_hadr_database_replica_states "
+                        + "WHERE is_local = 1 AND database_id = DB_ID()")) {
+            return rs.next() && rs.getBigDecimal(1) != null ? java.util.Optional.of(rs.getBigDecimal(1).toBigInteger()) : java.util.Optional.empty();
+        }
+    }
+
     /** {@code last_hardened_lsn} of the local secondary database. The LSN is a 25-digit decimal (VLF sequence,
      * block offset, slot), which can exceed a long; the 5-digit slot is dropped and, if it still would not fit,
      * further low digits, which keeps the ordering that ranking needs. */

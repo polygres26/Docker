@@ -277,4 +277,38 @@ class SqlServerSwitchoverLiveTest {
             cfg.stop("immediate");
         }
     }
+
+    @Test
+    void aSecondarysAppliedPositionReachesAWritesPositionOnlyOnceItIsRedone() throws Exception {
+        Assumptions.assumeTrue("1".equals(System.getenv("WARP_TEST_MSSQL_AG")), "set WARP_TEST_MSSQL_AG=1 after ag.sh up");
+        int primary = primaryPort();
+        int secondary = other(primary);
+        EngineHa ha = EngineHa.forDialect(SourceDialect.SQL_SERVER);
+        BackendTarget p = new BackendTarget("p", url(primary), "sa", PW);
+        BackendTarget s = new BackendTarget("s", url(secondary), "sa", PW);
+        try (Connection c = conn(masterUrl(secondary)); Statement st = c.createStatement()) {
+            st.execute("ALTER DATABASE w SET HADR SUSPEND");
+        }
+        try {
+            try (Connection c = conn(url(primary)); Statement st = c.createStatement()) {
+                st.execute("INSERT INTO dbo.t VALUES (" + (int) (System.nanoTime() % 1_000_000_000L + 1_000_000_000L) + ", 'probe')");
+            }
+            var written = ha.writePosition(p).orElseThrow();
+            Thread.sleep(2000);
+            assertTrue(ha.appliedPosition(s).orElseThrow().compareTo(written) < 0, "a suspended secondary has not applied the write");
+        } finally {
+            try (Connection c = conn(masterUrl(secondary)); Statement st = c.createStatement()) {
+                st.execute("ALTER DATABASE w SET HADR RESUME");
+            }
+        }
+        // a write after the resume: the secondary must reach it
+        try (Connection c = conn(url(primary)); Statement st = c.createStatement()) {
+            st.execute("INSERT INTO dbo.t VALUES (" + (int) (System.nanoTime() % 1_000_000_000L + 1_000_000_000L) + ", 'probe')");
+        }
+        var written = ha.writePosition(p).orElseThrow();
+        waitFor("the secondary to apply the write", 60, () -> ha.appliedPosition(s).orElseThrow().compareTo(written) >= 0);
+        try (Connection c = conn(url(primary)); Statement st = c.createStatement()) {
+            st.execute("DELETE FROM dbo.t WHERE v = 'probe'");
+        }
+    }
 }

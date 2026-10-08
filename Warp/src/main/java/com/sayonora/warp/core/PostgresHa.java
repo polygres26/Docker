@@ -76,6 +76,22 @@ final class PostgresHa implements EngineHa {
     }
 
     @Override
+    public java.util.Optional<java.math.BigInteger> writePosition(BackendTarget n) throws SQLException {
+        return lsn(n, "select pg_wal_lsn_diff(pg_current_wal_lsn(), '0/0')");
+    }
+
+    @Override
+    public java.util.Optional<java.math.BigInteger> appliedPosition(BackendTarget n) throws SQLException {
+        return lsn(n, "select pg_wal_lsn_diff(pg_last_wal_replay_lsn(), '0/0')");
+    }
+
+    private java.util.Optional<java.math.BigInteger> lsn(BackendTarget n, String query) throws SQLException {
+        try (Connection c = connect(n); Statement st = c.createStatement(); ResultSet rs = st.executeQuery(query)) {
+            return rs.next() && rs.getBigDecimal(1) != null ? java.util.Optional.of(rs.getBigDecimal(1).toBigInteger()) : java.util.Optional.empty();
+        }
+    }
+
+    @Override
     public void promote(BackendTarget n) throws SQLException {
         try (Connection c = connect(n); Statement st = c.createStatement();
                 ResultSet rs = st.executeQuery("select pg_promote(true, 60)")) {
