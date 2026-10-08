@@ -29,6 +29,117 @@ public sealed interface ShardingStrategy {
         }
     }
 
+    /**
+     * Fixed virtual slots assigned to shards: a key hashes to one of {@code slots} slots (stable, independent of the shard count) and each slot
+     * belongs to one shard. Adding or removing capacity moves whole slots between shards instead of re-hashing every key, which is what makes
+     * online rebalancing possible. Config: {@code slots:<column>:<N>/<shard>=<from>-<to>[,<from>-<to>...],<shard>=...} or the even shorthand
+     * {@code <N>/<shard>,<shard>,...}.
+     */
+    record SlotStrategy(int slots, List<String> owners) implements ShardingStrategy {
+        public SlotStrategy {
+            if (slots <= 0 || owners.size() != slots) {
+                throw new IllegalArgumentException("slot sharding needs an owner for each of its " + slots + " slots");
+            }
+            for (String o : owners) {
+                if (o == null || o.isBlank()) {
+                    throw new IllegalArgumentException("every slot needs an owning shard");
+                }
+            }
+            owners = List.copyOf(owners);
+        }
+
+        public int slotOf(String value) {
+            return (int) Long.remainderUnsigned(stableHash(value), slots);
+        }
+
+        @Override
+        public String resolve(String value) {
+            return owners.get(slotOf(value));
+        }
+
+        /** Number of slots each shard owns, in first-seen order. */
+        public Map<String, Integer> slotCounts() {
+            Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+            for (String o : owners) {
+                counts.merge(o, 1, Integer::sum);
+            }
+            return counts;
+        }
+
+        public SlotStrategy withOwner(java.util.Collection<Integer> moved, String shard) {
+            List<String> next = new ArrayList<>(owners);
+            for (int slot : moved) {
+                next.set(slot, shard);
+            }
+            return new SlotStrategy(slots, next);
+        }
+
+        /** Canonical params text: {@code N/shard=a-b,c-d;...} parses back to an equal strategy. */
+        public String toParams() {
+            Map<String, List<int[]>> runs = new java.util.LinkedHashMap<>();
+            int i = 0;
+            while (i < slots) {
+                int j = i;
+                while (j + 1 < slots && owners.get(j + 1).equals(owners.get(i))) {
+                    j++;
+                }
+                runs.computeIfAbsent(owners.get(i), k -> new ArrayList<>()).add(new int[] {i, j});
+                i = j + 1;
+            }
+            StringBuilder sb = new StringBuilder().append(slots).append('/');
+            boolean firstShard = true;
+            for (Map.Entry<String, List<int[]>> e : runs.entrySet()) {
+                sb.append(firstShard ? "" : ";").append(e.getKey()).append('=');
+                firstShard = false;
+                for (int k = 0; k < e.getValue().size(); k++) {
+                    int[] r = e.getValue().get(k);
+                    sb.append(k == 0 ? "" : ",").append(r[0] == r[1] ? String.valueOf(r[0]) : r[0] + "-" + r[1]);
+                }
+            }
+            return sb.toString();
+        }
+
+        static SlotStrategy parse(String params) {
+            int slash = params.indexOf('/');
+            if (slash < 0) {
+                throw new IllegalArgumentException("slot sharding params look like 1024/s1,s2 or 1024/s1=0-511;s2=512-1023");
+            }
+            int slots = Integer.parseInt(params.substring(0, slash).trim());
+            String rest = params.substring(slash + 1).trim();
+            String[] owners = new String[slots];
+            if (!rest.contains("=")) {
+                List<String> shards = splitCsv(rest);
+                if (shards.isEmpty()) {
+                    throw new IllegalArgumentException("slot sharding needs at least one shard");
+                }
+                // even spread in contiguous runs
+                for (int s = 0; s < slots; s++) {
+                    owners[s] = shards.get((int) ((long) s * shards.size() / slots));
+                }
+            } else {
+                for (String group : rest.split(";")) {
+                    String[] kv = group.split("=", 2);
+                    if (kv.length != 2) {
+                        throw new IllegalArgumentException("bad slot assignment '" + group + "'");
+                    }
+                    String shard = kv[0].trim();
+                    for (String run : kv[1].split(",")) {
+                        String[] ab = run.trim().split("-", 2);
+                        int from = Integer.parseInt(ab[0].trim());
+                        int to = ab.length == 2 ? Integer.parseInt(ab[1].trim()) : from;
+                        for (int s = from; s <= to; s++) {
+                            if (s < 0 || s >= slots || owners[s] != null) {
+                                throw new IllegalArgumentException("slot " + s + " is out of range or assigned twice");
+                            }
+                            owners[s] = shard;
+                        }
+                    }
+                }
+            }
+            return new SlotStrategy(slots, java.util.Arrays.asList(owners));
+        }
+    }
+
     static ShardingStrategy hash(List<String> backends) {
         return new HashStrategy(backends);
     }
@@ -159,6 +270,7 @@ public sealed interface ShardingStrategy {
             case ListStrategy ls -> distinct(ls.valueToBackend().values());
             case RangeStrategy rs -> distinct(rs.ranges().stream().map(RangeEntry::backend).toList());
             case DateRangeStrategy ds -> distinct(ds.ranges().stream().map(DateRangeEntry::backend).toList());
+            case SlotStrategy ss -> distinct(ss.owners());
         };
     }
 
@@ -184,6 +296,7 @@ public sealed interface ShardingStrategy {
         return switch (type.toLowerCase(java.util.Locale.ROOT)) {
             case "hash" -> hash(splitCsv(paramsSpec));
             case "consistent" -> consistentHash(splitCsv(paramsSpec));
+            case "slots" -> SlotStrategy.parse(paramsSpec);
             case "list" -> {
                 Map<String, String> valueToBackend = new java.util.LinkedHashMap<>();
                 for (String group : paramsSpec.split(";")) {
