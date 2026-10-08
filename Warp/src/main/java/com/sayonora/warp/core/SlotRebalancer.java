@@ -143,10 +143,11 @@ public final class SlotRebalancer {
         }
         RouterStage.TableShardRule rule = rule(plan.table());
         ShardingStrategy.SlotStrategy before = slotted(rule);
+        String originalParams = before.toParams();
         if (!RUNNING.compareAndSet(false, true)) {
             throw new IllegalStateException("another rebalance is already running in this process");
         }
-        if (!before.toParams().equals(plan.currentParams())) {
+        if (!originalParams.equals(plan.currentParams())) {
             RUNNING.set(false);
             throw new IllegalStateException("the slot map changed since this plan was made; plan again");
         }
@@ -162,6 +163,11 @@ public final class SlotRebalancer {
         long copied = 0;
         try {
             probeTable(target, table);
+            if (!before.owners().contains(plan.to()) && !before.spareMembers().contains(plan.to())) {
+                // join the group first, so the table existing on the new backend is not an ambiguity for queries while the rows are copied
+                store.apply(replaceEntry(store.tableShards(), table, keyColumn, before.withSpare(plan.to()).toParams()));
+                before = before.withSpare(plan.to());
+            }
             gate.freeze(table, moving);
             frozenAt = System.currentTimeMillis();
             if (!gate.awaitDrained(table, 60_000)) {
@@ -222,6 +228,65 @@ public final class SlotRebalancer {
             gate.blockScatter(table, false);
             RUNNING.set(false);
         }
+    }
+
+    /**
+     * Makes {@code shard} a member of the table's group while it owns no slot, so schema discovery and scatter reads know about it. Routing does not
+     * change. Needed once a table has been created on a new backend: until the backend belongs to the group, a query on the table is ambiguous.
+     */
+    public String addShard(String table, String shard) throws Exception {
+        RouterStage.TableShardRule rule = rule(table);
+        ShardingStrategy.SlotStrategy s = slotted(rule);
+        if (registry.resolveForRouting(shard) == null) {
+            throw new IllegalArgumentException("'" + shard + "' is not a configured backend");
+        }
+        ShardingStrategy.SlotStrategy next = s.withSpare(shard);
+        if (!next.equals(s)) {
+            store.apply(replaceEntry(store.tableShards(), rule.tableName(), rule.column(), next.toParams()));
+        }
+        return next.toParams();
+    }
+
+    /**
+     * Turns a {@code hash} table into a {@code slots} table without moving a row. A hash strategy sends a key to {@code h mod N}; with a slot
+     * count that is a multiple of N and slot {@code s} owned by shard {@code s mod N}, {@code (h mod slots) mod N} is the same number, so every key
+     * resolves to the shard it already lives on and only the way the rule is written changes. Because routing is identical before and after, no
+     * hold is needed and other Warp instances may pick the new rule up at their own pace. After this the table can be rebalanced slot by slot.
+     *
+     * @param slots 0 for the default (the smallest multiple of the shard count that is at least 1024); otherwise a multiple of the shard count
+     */
+    public String convertHashToSlots(String table, int slots) throws Exception {
+        RouterStage.TableShardRule rule = rule(table);
+        if (!(rule.strategy() instanceof ShardingStrategy.HashStrategy hash)) {
+            throw new IllegalArgumentException("table '" + rule.tableName() + "' uses a " + rule.strategy().getClass().getSimpleName().replace("Strategy", "").toLowerCase(Locale.ROOT)
+                    + " strategy; only a hash table converts without moving rows (a consistent-hash, list, range or date table would have to be reloaded)");
+        }
+        int n = hash.backends().size();
+        int count = slots > 0 ? slots : ((1024 + n - 1) / n) * n;
+        if (count % n != 0) {
+            throw new IllegalArgumentException("the slot count must be a multiple of the shard count (" + n + ") so that no key changes shard; " + count + " is not");
+        }
+        List<String> owners = new ArrayList<>();
+        for (int s = 0; s < count; s++) {
+            owners.add(hash.backends().get(s % n));
+        }
+        ShardingStrategy.SlotStrategy converted = new ShardingStrategy.SlotStrategy(count, owners);
+        for (int i = 0; i < 5000; i++) { // belt and braces: the two strategies must agree on every key
+            String key = Integer.toString(i * 7919) + (i % 3 == 0 ? "x" : "");
+            if (!hash.resolve(key).equals(converted.resolve(key))) {
+                throw new IllegalStateException("internal check failed: key " + key + " would change shard; nothing was changed");
+            }
+        }
+        if (!RUNNING.compareAndSet(false, true)) {
+            throw new IllegalStateException("a rebalance is running in this process");
+        }
+        try {
+            store.apply(replaceEntry(store.tableShards(), rule.tableName(), rule.column(), converted.toParams()));
+        } finally {
+            RUNNING.set(false);
+        }
+        log.warn("sharded table {} converted from hash over {} to {} slots; no rows moved", rule.tableName(), hash.backends(), count);
+        return converted.toParams();
     }
 
     /** Deletes, from {@code shard}, every row whose key the current slot map gives to another shard. */

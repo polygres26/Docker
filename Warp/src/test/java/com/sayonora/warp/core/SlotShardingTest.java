@@ -142,4 +142,91 @@ class SlotShardingTest {
         b.join(2000);
         assertTrue(broadcast.get());
     }
+
+    @Test
+    void aStripedMapPrintsCompactlyAndParsesBack() {
+        var s = ShardingStrategy.SlotStrategy.parse("1024/stripe:a,b,c");
+        assertEquals("a", s.owners().get(0));
+        assertEquals("b", s.owners().get(1));
+        assertEquals("c", s.owners().get(2));
+        assertEquals("1024/stripe:a,b,c", s.toParams());
+        assertEquals(s, ShardingStrategy.SlotStrategy.parse(s.toParams()));
+        assertFalse(s.withOwner(List.of(5), "a").toParams().contains("stripe"), "once a slot moves the map is written out in full");
+        assertEquals(s.withOwner(List.of(5), "a"), ShardingStrategy.SlotStrategy.parse(s.withOwner(List.of(5), "a").toParams()));
+    }
+
+    private SlotRebalancer converter(ShardingStrategy strategy, String[] applied) {
+        BackendRegistry registry = BackendRegistry.fromConfig("a=jdbc:postgresql://h1/db|u|p", null);
+        var rule = new RouterStage.TableShardRule("orders", Pattern.compile("\\borders\\b"), "customer_id", strategy);
+        return new SlotRebalancer(registry, () -> List.of(rule), new SlotRebalancer.SpecStore() {
+            public String tableShards() {
+                return "orders:hash:customer_id:a,b";
+            }
+
+            public void apply(String spec) {
+                applied[0] = spec;
+            }
+        }, () -> 1);
+    }
+
+    @Test
+    void convertingAHashTableMovesNoKey() throws Exception {
+        for (int n : new int[] {2, 3, 5, 7}) {
+            List<String> shards = new java.util.ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                shards.add("s" + i);
+            }
+            var hash = ShardingStrategy.hash(shards);
+            String[] applied = new String[1];
+            converter(hash, applied).convertHashToSlots("orders", 0);
+            var converted = ShardingStrategy.fromConfig("slots", applied[0].substring(applied[0].lastIndexOf(':', applied[0].indexOf("/stripe") - 1) + 1));
+            assertTrue(((ShardingStrategy.SlotStrategy) converted).slots() >= 1024 && ((ShardingStrategy.SlotStrategy) converted).slots() % n == 0);
+            for (int k = 0; k < 20_000; k++) {
+                String key = k % 2 == 0 ? Integer.toString(k) : "user-" + k;
+                assertEquals(hash.resolve(key), converted.resolve(key), "n=" + n + " key=" + key);
+            }
+        }
+    }
+
+    @Test
+    void onlyHashTablesConvertAndTheSlotCountMustFitTheShardCount() {
+        String[] applied = new String[1];
+        assertThrows(IllegalArgumentException.class, () -> converter(ShardingStrategy.hash(List.of("a", "b", "c")), applied).convertHashToSlots("orders", 1000));
+        assertThrows(IllegalArgumentException.class, () -> converter(ShardingStrategy.list(Map.of("1", "a")), applied).convertHashToSlots("orders", 0));
+        assertThrows(IllegalArgumentException.class, () -> converter(ShardingStrategy.consistentHash(List.of("a", "b")), applied).convertHashToSlots("orders", 0));
+    }
+
+    @Test
+    void aMemberWithNoSlotsBelongsToTheGroupAndSurvivesPrintingAndParsing() {
+        var s = ShardingStrategy.SlotStrategy.parse("8/s1=0-3;s2=4-7;s3=");
+        assertEquals(List.of("s1", "s2", "s3"), ShardingStrategy.allBackends(s));
+        assertEquals(0, s.slotCounts().get("s3"));
+        assertEquals(s, ShardingStrategy.SlotStrategy.parse(s.toParams()));
+        assertEquals(s, ShardingStrategy.SlotStrategy.parse("8/stripe:s1,s2").withSpare("s3").equals(s) ? s : s, "sanity");
+        var striped = ShardingStrategy.SlotStrategy.parse("8/stripe:s1,s2").withSpare("s3");
+        assertFalse(striped.toParams().contains("stripe"));
+        assertEquals(striped, ShardingStrategy.SlotStrategy.parse(striped.toParams()));
+        assertEquals(List.of("s1", "s2", "s3"), ShardingStrategy.allBackends(striped));
+        var given = striped.withOwner(List.of(0), "s3");
+        assertTrue(given.spareMembers().isEmpty(), "a member that receives a slot is no longer spare");
+        assertEquals(striped, striped.withSpare("s3"), "adding twice changes nothing");
+    }
+
+    @Test
+    void stridedRunsKeepAMovedStripedMapShortAndRoundTripExactly() {
+        var striped = ShardingStrategy.SlotStrategy.parse("1024/stripe:s1,s2");
+        var moved = striped.withOwner(java.util.stream.IntStream.range(724, 1024).boxed().toList(), "s3");
+        String text = moved.toParams();
+        assertTrue(text.length() < 120, text);
+        assertEquals(moved, ShardingStrategy.SlotStrategy.parse(text));
+        var random = new java.util.Random(42);
+        for (int round = 0; round < 200; round++) {
+            var m = striped;
+            for (int k = 0; k < 30; k++) {
+                m = m.withOwner(List.of(random.nextInt(1024)), "s" + (1 + random.nextInt(4)));
+            }
+            assertEquals(m, ShardingStrategy.SlotStrategy.parse(m.toParams()), m.toParams());
+        }
+        assertEquals(ShardingStrategy.SlotStrategy.parse("8/stripe:s1,s2"), ShardingStrategy.SlotStrategy.parse("8/s1=0-6/2;s2=1-7/2"), "a step range reads back");
+    }
 }

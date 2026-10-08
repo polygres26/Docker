@@ -922,6 +922,23 @@ public final class MetricsServer {
                             }
                             response.setStatus(HttpServletResponse.SC_OK);
                             response.getWriter().write(out.toString());
+                        } else if ("/api/sharding/convert".equals(target) && "POST".equals(request.getMethod())) {
+                            JsonObject body = com.google.gson.JsonParser.parseString(new String(request.getInputStream().readAllBytes(),
+                                    java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
+                            String map = slotRebalancer.convertHashToSlots(body.get("table").getAsString(), body.has("slots") ? body.get("slots").getAsInt() : 0);
+                            JsonObject out = new JsonObject();
+                            out.addProperty("table", body.get("table").getAsString());
+                            out.addProperty("map", map);
+                            out.addProperty("rowsMoved", 0);
+                            response.setStatus(HttpServletResponse.SC_OK);
+                            response.getWriter().write(out.toString());
+                        } else if ("/api/sharding/add-shard".equals(target) && "POST".equals(request.getMethod())) {
+                            JsonObject body = com.google.gson.JsonParser.parseString(new String(request.getInputStream().readAllBytes(),
+                                    java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
+                            JsonObject out = new JsonObject();
+                            out.addProperty("map", slotRebalancer.addShard(body.get("table").getAsString(), body.get("shard").getAsString()));
+                            response.setStatus(HttpServletResponse.SC_OK);
+                            response.getWriter().write(out.toString());
                         } else if ("/api/sharding/purge".equals(target) && "POST".equals(request.getMethod())) {
                             JsonObject body = com.google.gson.JsonParser.parseString(new String(request.getInputStream().readAllBytes(),
                                     java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
@@ -932,7 +949,7 @@ public final class MetricsServer {
                             response.getWriter().write(out.toString());
                         } else {
                             response.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
-                            response.getWriter().write("{\"error\":\"use GET /api/sharding, POST /api/sharding/rebalance or POST /api/sharding/purge\"}");
+                            response.getWriter().write("{\"error\":\"use GET /api/sharding, POST /api/sharding/convert, /rebalance or /purge\"}");
                         }
                     } catch (IllegalArgumentException | IllegalStateException | com.google.gson.JsonParseException | NullPointerException e) {
                         response.setStatus(HttpServletResponse.SC_CONFLICT);

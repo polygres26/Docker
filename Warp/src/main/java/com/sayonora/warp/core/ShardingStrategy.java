@@ -35,8 +35,14 @@ public sealed interface ShardingStrategy {
      * online rebalancing possible. Config: {@code slots:<column>:<N>/<shard>=<from>-<to>[,<from>-<to>...],<shard>=...} or the even shorthand
      * {@code <N>/<shard>,<shard>,...}.
      */
-    record SlotStrategy(int slots, List<String> owners) implements ShardingStrategy {
+    record SlotStrategy(int slots, List<String> owners, List<String> spareMembers) implements ShardingStrategy {
+        /** No spare members: every shard of the group owns at least one slot. */
+        public SlotStrategy(int slots, List<String> owners) {
+            this(slots, owners, List.of());
+        }
+
         public SlotStrategy {
+            spareMembers = List.copyOf(spareMembers);
             if (slots <= 0 || owners.size() != slots) {
                 throw new IllegalArgumentException("slot sharding needs an owner for each of its " + slots + " slots");
             }
@@ -63,6 +69,9 @@ public sealed interface ShardingStrategy {
             for (String o : owners) {
                 counts.merge(o, 1, Integer::sum);
             }
+            for (String m : spareMembers) {
+                counts.putIfAbsent(m, 0);
+            }
             return counts;
         }
 
@@ -71,30 +80,65 @@ public sealed interface ShardingStrategy {
             for (int slot : moved) {
                 next.set(slot, shard);
             }
-            return new SlotStrategy(slots, next);
+            return new SlotStrategy(slots, next, spareMembers.stream().filter(m -> !m.equals(shard)).toList());
+        }
+
+        /** The same map with {@code shard} also belonging to the group, owning nothing yet (so schema discovery and scatter reads include it). */
+        public SlotStrategy withSpare(String shard) {
+            if (owners.contains(shard) || spareMembers.contains(shard)) {
+                return this;
+            }
+            List<String> spares = new ArrayList<>(spareMembers);
+            spares.add(shard);
+            return new SlotStrategy(slots, owners, spares);
         }
 
         /** Canonical params text: {@code N/shard=a-b,c-d;...} parses back to an equal strategy. */
         public String toParams() {
-            Map<String, List<int[]>> runs = new java.util.LinkedHashMap<>();
-            int i = 0;
-            while (i < slots) {
-                int j = i;
-                while (j + 1 < slots && owners.get(j + 1).equals(owners.get(i))) {
-                    j++;
-                }
-                runs.computeIfAbsent(owners.get(i), k -> new ArrayList<>()).add(new int[] {i, j});
-                i = j + 1;
+            List<String> stripe = new ArrayList<>(new java.util.LinkedHashSet<>(owners));
+            boolean striped = stripe.size() > 1 && spareMembers.isEmpty();
+            for (int s = 0; s < slots && striped; s++) {
+                striped = owners.get(s).equals(stripe.get(s % stripe.size()));
+            }
+            if (striped) {
+                return slots + "/stripe:" + String.join(",", stripe);
+            }
+            Map<String, List<Integer>> slotsOf = new java.util.LinkedHashMap<>();
+            for (int slot = 0; slot < slots; slot++) {
+                slotsOf.computeIfAbsent(owners.get(slot), k -> new ArrayList<>()).add(slot);
             }
             StringBuilder sb = new StringBuilder().append(slots).append('/');
             boolean firstShard = true;
-            for (Map.Entry<String, List<int[]>> e : runs.entrySet()) {
+            for (Map.Entry<String, List<Integer>> e : slotsOf.entrySet()) {
                 sb.append(firstShard ? "" : ";").append(e.getKey()).append('=');
                 firstShard = false;
-                for (int k = 0; k < e.getValue().size(); k++) {
-                    int[] r = e.getValue().get(k);
-                    sb.append(k == 0 ? "" : ",").append(r[0] == r[1] ? String.valueOf(r[0]) : r[0] + "-" + r[1]);
+                List<Integer> list = e.getValue();
+                int i = 0;
+                boolean firstRun = true;
+                while (i < list.size()) {
+                    int j = i;
+                    int step = i + 1 < list.size() ? list.get(i + 1) - list.get(i) : 0;
+                    while (step > 0 && j + 1 < list.size() && list.get(j + 1) - list.get(j) == step) {
+                        j++;
+                    }
+                    int length = j - i + 1;
+                    sb.append(firstRun ? "" : ",");
+                    firstRun = false;
+                    if (length >= 3 || (length == 2 && step == 1)) {
+                        sb.append(list.get(i)).append('-').append(list.get(j));
+                        if (step > 1) {
+                            sb.append('/').append(step);
+                        }
+                        i = j + 1;
+                    } else {
+                        sb.append(list.get(i));
+                        i++;
+                    }
                 }
+            }
+            for (String spare : spareMembers) {
+                sb.append(firstShard ? "" : ";").append(spare).append('=');
+                firstShard = false;
             }
             return sb.toString();
         }
@@ -107,7 +151,17 @@ public sealed interface ShardingStrategy {
             int slots = Integer.parseInt(params.substring(0, slash).trim());
             String rest = params.substring(slash + 1).trim();
             String[] owners = new String[slots];
-            if (!rest.contains("=")) {
+            List<String> spares = new ArrayList<>();
+            if (rest.startsWith("stripe:")) {
+                // slot s belongs to shard s mod k: what a hash strategy over k shards already does when k divides the slot count
+                List<String> shards = splitCsv(rest.substring("stripe:".length()));
+                if (shards.isEmpty()) {
+                    throw new IllegalArgumentException("slot sharding needs at least one shard");
+                }
+                for (int s = 0; s < slots; s++) {
+                    owners[s] = shards.get(s % shards.size());
+                }
+            } else if (!rest.contains("=")) {
                 List<String> shards = splitCsv(rest);
                 if (shards.isEmpty()) {
                     throw new IllegalArgumentException("slot sharding needs at least one shard");
@@ -123,11 +177,25 @@ public sealed interface ShardingStrategy {
                         throw new IllegalArgumentException("bad slot assignment '" + group + "'");
                     }
                     String shard = kv[0].trim();
+                    if (kv[1].isBlank()) {
+                        spares.add(shard);
+                        continue;
+                    }
                     for (String run : kv[1].split(",")) {
-                        String[] ab = run.trim().split("-", 2);
+                        String text = run.trim();
+                        int step = 1;
+                        int slashAt = text.indexOf('/');
+                        if (slashAt >= 0) {
+                            step = Integer.parseInt(text.substring(slashAt + 1).trim());
+                            text = text.substring(0, slashAt);
+                            if (step < 1) {
+                                throw new IllegalArgumentException("a slot range step must be at least 1");
+                            }
+                        }
+                        String[] ab = text.split("-", 2);
                         int from = Integer.parseInt(ab[0].trim());
                         int to = ab.length == 2 ? Integer.parseInt(ab[1].trim()) : from;
-                        for (int s = from; s <= to; s++) {
+                        for (int s = from; s <= to; s += step) {
                             if (s < 0 || s >= slots || owners[s] != null) {
                                 throw new IllegalArgumentException("slot " + s + " is out of range or assigned twice");
                             }
@@ -136,7 +204,7 @@ public sealed interface ShardingStrategy {
                     }
                 }
             }
-            return new SlotStrategy(slots, java.util.Arrays.asList(owners));
+            return new SlotStrategy(slots, java.util.Arrays.asList(owners), spares);
         }
     }
 
@@ -270,7 +338,11 @@ public sealed interface ShardingStrategy {
             case ListStrategy ls -> distinct(ls.valueToBackend().values());
             case RangeStrategy rs -> distinct(rs.ranges().stream().map(RangeEntry::backend).toList());
             case DateRangeStrategy ds -> distinct(ds.ranges().stream().map(DateRangeEntry::backend).toList());
-            case SlotStrategy ss -> distinct(ss.owners());
+            case SlotStrategy ss -> {
+                List<String> all = new ArrayList<>(ss.owners());
+                all.addAll(ss.spareMembers());
+                yield distinct(all);
+            }
         };
     }
 
