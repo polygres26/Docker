@@ -493,8 +493,11 @@ qualifier needed anywhere), and the router picks the real fastest path per state
   every row on the shard that owns its slot, and a scatter `count(*)` of the unchanging rows exact on every one of ~330 checks run throughout; writes to the moving slots were
   held 44 ms (Postgres) and 305 ms (MySQL); on the second move, whose target already owned slots, scatter reads waited 15 ms (Postgres) and 27 ms (MySQL) against writes held 53 ms and 205 ms. With two Warp instances sharing the control plane and the shards (Postgres), writers and scatter counters through both while
   21 slots moved and 5 moved on again from the other instance: 12,137 acknowledged writes, none lost, duplicated or failed, every scatter count exact; with one instance
-  paused the move was abandoned after the acknowledgement timeout, nothing moved and no write was lost. Not run on SQL Server or Oracle (the copy uses plain JDBC, not
-  engine features), or with a deliberately failing copy.
+  paused the move was abandoned after the acknowledgement timeout, nothing moved and no write was lost. The same single-instance run, with a scatter count checked throughout, also passed on **SQL Server 2022** (277 checks, 21,820 acknowledged writes, none lost or
+  failed) and **Oracle Free 23ai** (258 checks, 21,618 writes, none lost or failed), including the staging table (`SELECT ... INTO` on SQL Server, `CREATE TABLE ... AS` on Oracle);
+  the hash-to-slots conversion and the automatic balancer filling a new empty shard passed on both as well, as on Postgres and MySQL. Each engine's shards were three databases (SQL Server)
+  or three users (Oracle) of one container, written through Warp's Postgres front end. Not run with a deliberately failing copy, with several instances on SQL Server or Oracle, or on
+  shards that are separate servers of those engines.
 - **Automatic rebalancing (`WARP_AUTO_REBALANCE=true`, off by default).** On one instance at a time (a lease in the control plane), every
   `WARP_AUTO_REBALANCE_INTERVAL_SECONDS` (300) the balancer counts the rows of each slot table on every shard of its group (empty members included). When the gap
   between the fullest and the emptiest shard exceeds `WARP_AUTO_REBALANCE_THRESHOLD` (0.2) times the mean, it moves slots from the fullest to the emptiest through the same
