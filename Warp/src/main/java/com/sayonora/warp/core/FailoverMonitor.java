@@ -1048,6 +1048,11 @@ public final class FailoverMonitor {
                 }
             }
         }
+        if (h.fencer() == null && FailoverFencers.requireFence()) {
+            blocked(backend, "WARP_FAILOVER_REQUIRE_FENCE is on but no fencer is configured (WARP_FAILOVER_FENCE_COMMAND, _WEBHOOK, _SSH_TARGET "
+                    + "or _EXEC) -- not promoting without being able to stop the old primary");
+            return;
+        }
         if (h.fencer() != null) {
             try {
                 if (!h.fencer().fence(oldUrl)) {
@@ -1313,8 +1318,7 @@ public final class FailoverMonitor {
      * {@code read_only=OFF}, GTID/binlog position), plus an optional fencing command from {@code WARP_FAILOVER_FENCE_COMMAND} run with
      * {@code FAILED_PRIMARY_URL} in its environment (exit 0 = fenced). */
     public static PromoteHooks defaultHooks(FailoverCoordination coordination) {
-        String fenceCmd = System.getenv("WARP_FAILOVER_FENCE_COMMAND");
-        Fencer fencer = fenceCmd == null || fenceCmd.isBlank() ? null : url -> runFence(fenceCmd, url);
+        Fencer fencer = FailoverFencers.fromEnv(System.getenv());
         double maxLag = 30;
         String raw = System.getenv("WARP_FAILOVER_MAX_PROMOTE_LAG_SECONDS");
         if (raw != null && !raw.isBlank()) {
@@ -1347,18 +1351,5 @@ public final class FailoverMonitor {
             throw new IllegalStateException("repointing is not supported for " + replica.dialect());
         }
         ha.repoint(replica, newPrimary);
-    }
-
-    private static boolean runFence(String command, String failedPrimaryUrl) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder("sh", "-c", command);
-        pb.environment().put("FAILED_PRIMARY_URL", failedPrimaryUrl);
-        pb.redirectErrorStream(true);
-        Process p = pb.start();
-        p.getInputStream().transferTo(java.io.OutputStream.nullOutputStream());
-        if (!p.waitFor(60, TimeUnit.SECONDS)) {
-            p.destroyForcibly();
-            return false;
-        }
-        return p.exitValue() == 0;
     }
 }
