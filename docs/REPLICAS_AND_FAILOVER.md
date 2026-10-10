@@ -199,7 +199,7 @@ and reports why. It restarts nothing and is lifted with `ALTER SYSTEM DISABLE RE
 `WARP_FAILOVER_REJOIN_COMMAND` (`WARP_REJOIN_STANDBY_BECAME_PRIMARY_SCN`, and `WARP_REJOIN_DIVERGED=true` when the old primary committed past it, which the flashback
 discards), fences the node while the command runs, and waits for the node to be a physical standby with redo apply running; with no command it answers `NEEDS_REBUILD` with
 the `REINSTATE DATABASE` / flashback-and-convert steps. Tested against a scripted fake (statement order, that only `sid,serial#` text reaches a `KILL SESSION`, the separate
-fence account, the rejoin decisions). The fence against a real Oracle Free 23ai is covered by `OracleFenceLiveTest`; **the rejoin has never run against a real Data Guard**.
+fence account, the rejoin decisions). The fence was run against a real Oracle Free 23ai (`OracleFenceLiveTest`): the session that was open when the node was fenced was ended (ORA-03113), a new login by the application account was refused with ORA-01035 and `writesFrozen` reported it, and after `releaseFence` the account could log in and write again; a backend user holding RESTRICTED SESSION was reported as not stopped and the restriction was lifted. **The rejoin has never run against a real Data Guard**.
 
 ## SQL Server Availability Groups (follow, promote and planned switchover)
 
