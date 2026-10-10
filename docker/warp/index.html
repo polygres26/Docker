@@ -1240,6 +1240,57 @@ aws sqs receive-message \                          # SQS wire
 
       </details>
 
+      <h3 class="subhead" id="all-protocols">Every protocol Warp speaks<a class="permalink" href="#all-protocols" aria-label="Link to this section">#</a></h3>
+      <p class="rttNote">
+        27 front ends. Emulated ones keep their data on Postgres backends; the Oracle, MySQL and SQL Server
+        front ends can instead bridge or relay to the real engine. "Verified against" names what each was
+        actually tested with; "Not stated" means it was not audited, not that it is supported.
+      </p>
+      <details class="methodDetails">
+        <summary>See the full protocol table →</summary>
+      <div class="rttTableWrap">
+        <table class="rttTable compareTable">
+          <thead>
+            <tr><th>Front end</th><th>Emulates</th><th>Port (TLS)</th><th>Data lives in</th><th>Sharded by</th><th>Atomic across hosts</th><th>Verified against</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>pgwire</td><td>PostgreSQL v3</td><td>15432 (same port)</td><td>Postgres (pass-through)</td><td>Table and value sharding, slots</td><td>2PC where the shards support it, else commit-last</td><td>Real pgwire client, live</td></tr>
+            <tr><td>orawire</td><td>Oracle TNS/TTC</td><td>11521 (2484)</td><td>`emulate`: Postgres; `bridge`/`relay`: real Oracle</td><td>As for SQL (emulate/bridge)</td><td>As pgwire</td><td>Real Python, JDBC, SQLcl; Relay also SQL*Plus</td></tr>
+            <tr><td>mywire</td><td>MySQL</td><td>13306 (same port)</td><td>`emulate`: Postgres; `bridge`/`relay`: real MySQL</td><td>As for SQL</td><td>As pgwire</td><td>Real MySQL 8.4</td></tr>
+            <tr><td>mssqlwire</td><td>SQL Server TDS</td><td>14333 (same port)</td><td>`emulate`: Postgres; `bridge`/`relay`: real SQL Server</td><td>As for SQL</td><td>As pgwire (XA not available in a stock Linux container)</td><td>Real SQL Server / Azure SQL Edge</td></tr>
+            <tr><td>gRPC</td><td>Warp's own `QueryService.Execute`</td><td>7070 (17071)</td><td>Shared pipeline</td><td>As for SQL</td><td>Not stated</td><td>Not stated</td></tr>
+            <tr><td>MCP</td><td>Model Context Protocol</td><td>18010 (18443)</td><td>Postgres, or native Oracle/MySQL/SQL Server</td><td>Not stated</td><td>Not stated</td><td>Not stated for MCP as a whole</td></tr>
+            <tr><td>A2A</td><td>Agent2Agent, one method</td><td>18030 (18444)</td><td>Uses MCP's `query_natural_language`</td><td>n/a</td><td>n/a (read-only)</td><td>Not stated</td></tr>
+            <tr><td>mongowire</td><td>MongoDB 7.0</td><td>27017 (same port)</td><td>Postgres, `jsonb`+`bson` per collection</td><td>`_id`</td><td>Not atomic across hosts</td><td>Real mongod 7.0, 2,692 steps</td></tr>
+            <tr><td>dynamowire</td><td>DynamoDB JSON API</td><td>18000 (18445)</td><td>Postgres</td><td>Partition key</td><td>`TransactWriteItems` per host, partial window</td><td>DynamoDB Local, AWS docs, Floci suites</td></tr>
+            <tr><td>oswire</td><td>OpenSearch 2.x REST</td><td>9200 (18447)</td><td>Postgres</td><td>`_id`</td><td>Not stated</td><td>Real OpenSearch 2.19.6</td></tr>
+            <tr><td>influxwire</td><td>InfluxDB 1.x, 2.x write</td><td>8086 (18448)</td><td>Postgres (optional TimescaleDB)</td><td>Measurement + tag set</td><td>Batch applied host by host</td><td>Real InfluxDB 1.8.10</td></tr>
+            <tr><td>boltwire</td><td>Neo4j Bolt 4.4/5.x + Cypher</td><td>7687 (same port)</td><td>One Postgres backend</td><td>None (one host)</td><td>n/a</td><td>Real Neo4j 5.26, openCypher TCK</td></tr>
+            <tr><td>gremlinwire</td><td>Gremlin Server (WebSocket+HTTP)</td><td>8182 (18461)</td><td>Postgres</td><td>Vertex key</td><td>Vertex drop is one transaction per host</td><td>Real TinkerPop 3.8.2</td></tr>
+            <tr><td>rediswire</td><td>Redis RESP2/RESP3</td><td>16379 (17379)</td><td>Postgres</td><td>CRC16 hash slot</td><td>CROSSSLOT without a hash tag</td><td>Real Redis 7.4.11</td></tr>
+            <tr><td>cosmoswire</td><td>Cosmos DB for NoSQL</td><td>18081 (18457)</td><td>Postgres</td><td>Partition key</td><td>One partition key only</td><td>Not compared against real Cosmos DB</td></tr>
+            <tr><td>cqlwire</td><td>Cassandra CQL v3/v4</td><td>19042 (same port)</td><td>Postgres</td><td>Murmur3 partition token</td><td>Batch not atomic across hosts</td><td>Real Cassandra 5.0.9, 6,329 steps</td></tr>
+            <tr><td>bigtablewire</td><td>Bigtable gRPC</td><td>8088 (18456)</td><td>Postgres</td><td>Table + row key</td><td>Not stated</td><td>Google's Bigtable emulator, 503 steps</td></tr>
+            <tr><td>datastorewire</td><td>Datastore v1 gRPC and REST</td><td>8081 (18455)</td><td>Postgres</td><td>Entity group</td><td>Per host, failure-window caveat</td><td>Google's Datastore emulator, 330 steps</td></tr>
+            <tr><td>firestorewire</td><td>Firestore gRPC and REST</td><td>8080 (18454)</td><td>Postgres</td><td>Document path</td><td>Per host, failure-window caveat</td><td>Google's Firestore emulator, 418 steps</td></tr>
+            <tr><td>sqswire</td><td>Amazon SQS (JSON and Query)</td><td>9324 (18446)</td><td>Postgres (reduced core on Oracle/SQL Server/MySQL)</td><td>Queue name</td><td>Queue is one host; DLQ move is two-step</td><td>Floci suites, conformance tests</td></tr>
+            <tr><td>kafkawire</td><td>Apache Kafka wire protocol</td><td>19092 (19093)</td><td>Postgres</td><td>Topic + partition</td><td>Per partition batch</td><td>Real Kafka 4.3.1, 435 steps</td></tr>
+            <tr><td>amqpwire</td><td>AMQP 0-9-1 and 1.0</td><td>5672 (5671)</td><td>Postgres</td><td>Vhost + queue</td><td>Outbox, at-least-once</td><td>Real RabbitMQ 4.3.6</td></tr>
+            <tr><td>pubsubwire</td><td>Google Pub/Sub</td><td>8085 gRPC, 8087 REST (18453, 18452)</td><td>Postgres</td><td>Subscription</td><td>Outbox, at-least-once</td><td>Google's Pub/Sub emulator, 269 steps</td></tr>
+            <tr><td>awswire</td><td>SNS, Kinesis, Secrets Manager, SSM, KMS, STS, IAM (+ DynamoDB, SQS, S3)</td><td>4566 (18451)</td><td>Postgres</td><td>Per service key</td><td>Not stated</td><td>Floci SDK suites; no real AWS</td></tr>
+            <tr><td>s3wire</td><td>Amazon S3</td><td>18020 (18449)</td><td>Postgres chunks, or proxy to a real S3/MinIO bucket</td><td>Bucket + key</td><td>No cross-shard atomicity</td><td>MinIO where it implements the operation</td></tr>
+            <tr><td>gcswire</td><td>Google Cloud Storage JSON + S3-style XML</td><td>4443 (18450)</td><td>Postgres chunks</td><td>Bucket + object name</td><td>Not stated</td><td>fake-gcs-server, 394 steps</td></tr>
+            <tr><td>azurewire</td><td>Azure Blob / Queue / Table</td><td>10000 / 10001 / 10002 (18458 / 18459 / 18460)</td><td>Postgres</td><td>Per service key</td><td>Table batch: one PartitionKey, atomic</td><td>Azurite 3.37, 529 steps</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="rttNote">
+        Real backends, limits and gaps: see the
+        <a href="https://github.com/polygres26/Docker/blob/main/docs/PROTOCOLS_AND_BACKENDS.md">protocols and backends reference</a>.
+        Replicas and failover per engine: <a href="#outages">Planned and unplanned outages</a>.
+      </p>
+      </details>
+
       <h3 class="subhead" id="compatibility">Compatibility, honestly scoped<a class="permalink" href="#compatibility" aria-label="Link to this section">#</a></h3>
       <div class="statGrid">
         <div class="statCard"><span class="statNum">12</span><span class="statLabel">Client protocols</span></div>
