@@ -692,6 +692,22 @@ public final class Main {
         }, "warp-2pc-readiness");
         twoPhaseCheck.setDaemon(true);
         twoPhaseCheck.start();
+        long twoPhaseRecheckSeconds = Long.parseLong(System.getenv().getOrDefault("WARP_2PC_RECHECK_SECONDS", "60"));
+        if (twoPhaseRecheckSeconds > 0) {
+            // follows config changes (a shard added to a table) and fixed settings without a restart of Warp; logs only transitions
+            java.util.concurrent.ScheduledExecutorService twoPhaseRecheck = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "warp-2pc-recheck");
+                t.setDaemon(true);
+                return t;
+            });
+            twoPhaseRecheck.scheduleWithFixedDelay(() -> {
+                try {
+                    twoPhase.recheck();
+                } catch (RuntimeException e) {
+                    log.warn("two-phase commit readiness recheck failed: {}", e.toString());
+                }
+            }, twoPhaseRecheckSeconds, twoPhaseRecheckSeconds, java.util.concurrent.TimeUnit.SECONDS);
+        }
         if (reshardCoordination != null) {
             // a move whose mover crashed leaves copies on the wrong shard: the first instance to notice its lapsed hold cleans up
             java.util.concurrent.ScheduledExecutorService recovery = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {

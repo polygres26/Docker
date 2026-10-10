@@ -96,27 +96,67 @@ public final class TwoPhaseReadiness {
         return out;
     }
 
+    /** Test hook: told about every change {@link #recheck} sees. */
+    volatile java.util.function.Consumer<String> transitions;
+
+    private final java.util.Map<String, State> lastState = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Checks again and logs only what changed since the last pass: a shard that became ready or stopped being ready (a setting fixed and
+     * Postgres restarted, a shard added to a table, an engine swapped). The first pass logs everything, as {@link #checkAndLog}.
+     */
+    public List<Report> recheck() {
+        List<Report> reports = check();
+        boolean required = "required".equalsIgnoreCase(System.getenv("WARP_SHARD_WRITE_2PC"));
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (Report r : reports) {
+            seen.add(r.backend());
+            State before = lastState.put(r.backend(), r.state());
+            if (before == r.state()) {
+                continue;
+            }
+            if (transitions != null) {
+                transitions.accept(r.backend() + ": " + before + " -> " + r.state());
+            }
+            if (before == null) {
+                logOne(r, required);
+            } else if (r.state() == State.READY) {
+                log.info("shard backend '{}' ({}) can now take part in two-phase commit (was {}): {}", r.backend(), r.engine(), before, r.detail());
+            } else {
+                log.warn("shard backend '{}' ({}) changed from {} to {}: {}{}", r.backend(), r.engine(), before, r.state(), r.detail(),
+                        r.fix() == null ? "" : " Fix: " + r.fix() + ".");
+            }
+        }
+        lastState.keySet().retainAll(seen);
+        return reports;
+    }
+
     /** Logs the outcome: one warning per backend that cannot do two-phase commit, an error when writes are set to require it. */
     public List<Report> checkAndLog() {
         List<Report> reports = check();
         boolean required = "required".equalsIgnoreCase(System.getenv("WARP_SHARD_WRITE_2PC"));
         for (Report r : reports) {
-            switch (r.state()) {
-                case NOT_READY, UNSUPPORTED -> {
-                    String msg = "shard backend '{}' ({}) cannot take part in two-phase commit: {}{} Multi-shard writes to {} "
-                            + (required ? "will be REFUSED (WARP_SHARD_WRITE_2PC=required)." : "will use commit-last, which can leave some shards committed and others not.");
-                    String fix = r.fix() == null ? "" : " Fix: " + r.fix() + ".";
-                    if (required) {
-                        log.error(msg, r.backend(), r.engine(), r.detail(), fix, r.tables());
-                    } else {
-                        log.warn(msg, r.backend(), r.engine(), r.detail(), fix, r.tables());
-                    }
-                }
-                case UNKNOWN -> log.warn("shard backend '{}' ({}): could not tell whether it supports two-phase commit: {}", r.backend(), r.engine(), r.detail());
-                case READY -> log.info("shard backend '{}' ({}) supports two-phase commit: {}", r.backend(), r.engine(), r.detail());
-            }
+            lastState.put(r.backend(), r.state());
+            logOne(r, required);
         }
         return reports;
+    }
+
+    private void logOne(Report r, boolean required) {
+        switch (r.state()) {
+            case NOT_READY, UNSUPPORTED -> {
+                String msg = "shard backend '{}' ({}) cannot take part in two-phase commit: {}{} Multi-shard writes to {} "
+                        + (required ? "will be REFUSED (WARP_SHARD_WRITE_2PC=required)." : "will use commit-last, which can leave some shards committed and others not.");
+                String fix = r.fix() == null ? "" : " Fix: " + r.fix() + ".";
+                if (required) {
+                    log.error(msg, r.backend(), r.engine(), r.detail(), fix, r.tables());
+                } else {
+                    log.warn(msg, r.backend(), r.engine(), r.detail(), fix, r.tables());
+                }
+            }
+            case UNKNOWN -> log.warn("shard backend '{}' ({}): could not tell whether it supports two-phase commit: {}", r.backend(), r.engine(), r.detail());
+            case READY -> log.info("shard backend '{}' ({}) supports two-phase commit: {}", r.backend(), r.engine(), r.detail());
+        }
     }
 
     static Probe probe(BackendTarget target) {

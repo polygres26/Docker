@@ -39,12 +39,26 @@ class TwoPhaseReadinessLiveTest {
                     .frontend("pgwire", "WARP_PGWIRE_PORT")
                     .env("WARP_BACKENDS", "default=" + on.url() + "|warp|x;a=" + on.url() + "|warp|x;b=" + off.url() + "|warp|x")
                     .env("WARP_TABLE_SHARDS", "orders:hash:id:a,b")
-                    .env("WARP_ADMIN_TOKEN", com.sayonora.warp.testsupport.BrownoutHarness.TOKEN)
+                    .env("WARP_ADMIN_TOKEN", com.sayonora.warp.testsupport.BrownoutHarness.TOKEN).env("WARP_2PC_RECHECK_SECONDS", "2")
                     .env("WARP_OTEL_ENDPOINT", "disabled").start()) {
                 var req = java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://localhost:" + warp.metricsPort() + "/api/sharding/2pc"))
                         .header("Authorization", "Bearer " + com.sayonora.warp.testsupport.BrownoutHarness.TOKEN).build();
                 String body = java.net.http.HttpClient.newHttpClient().send(req, java.net.http.HttpResponse.BodyHandlers.ofString()).body();
                 assertTrue(body.contains("\"backend\":\"b\"") && body.contains("NOT_READY") && body.contains("restart Postgres"), body);
+                // the operator fixes the setting and restarts the shard: the recheck notices without a Warp restart
+                try (Connection c = off.conn(); Statement st = c.createStatement()) {
+                    st.execute("ALTER SYSTEM SET max_prepared_transactions = 50");
+                }
+                off.stop("fast");
+                off.start();
+                long until = System.currentTimeMillis() + 30_000;
+                String after = body;
+                while (after.contains("NOT_READY") && System.currentTimeMillis() < until) {
+                    Thread.sleep(1000);
+                    after = java.net.http.HttpClient.newHttpClient().send(req, java.net.http.HttpResponse.BodyHandlers.ofString()).body();
+                }
+                assertTrue(!after.contains("NOT_READY"), after);
+                Thread.sleep(5000); // a recheck pass logs "can now take part in two-phase commit"
             }
         } finally {
             on.stop("immediate");
