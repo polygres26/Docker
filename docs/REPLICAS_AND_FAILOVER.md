@@ -26,7 +26,7 @@ touched it; **n/a** means the engine has no such mode.
 | Read-your-writes by log position (`WARP_READ_YOUR_WRITES`) | Live, end to end | Probe only | Probe only | Not run |
 | Multi-shard writes atomic by two-phase commit | Live | Live | Fallback only (no XA in a stock Linux container) | Live (needs the XA grants) |
 | Slot rebalancing, conversion and auto-balancer | Live | Live | Live | Live |
-| Rebalancing while a shard fails over, with replicas serving reads | Live | Not run | Not run | Not run |
+| Rebalancing while a shard fails over, with replicas serving reads | Live | Live | Not run | Not run |
 | Relay reader port; the relay's main port follows a failover | n/a (no relay mode) | Live | Stand-in server only | Stand-in server only |
 | Fencers for `WARP_FAILOVER_REQUIRE_FENCE` (command, webhook, SSH, exec) | Live (webhook) | Not run | Not run | Not run |
 

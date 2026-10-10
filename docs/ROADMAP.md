@@ -137,7 +137,7 @@ These are real, working capabilities with disclosed, scoped gaps — not aspirat
   transpiler.
 - **Oracle failover and switchover**: promotion, switchover and rejoin are written to Oracle's documentation and tested against a scripted
   fake only; no Data Guard was available. Only the stale-primary fence was run against a real Oracle (Free 23ai).
-- **HA beyond Postgres and MySQL in the harder scenarios**: a shard failing over in the middle of a rebalance, two-phase commit on SQL Server
+- **HA beyond Postgres and MySQL in the harder scenarios**: a shard failing over in the middle of a rebalance (live on Postgres and MySQL; not run on SQL Server or Oracle), two-phase commit on SQL Server
   (a stock Linux container has no XA procedures, so multi-shard writes fall back to commit-last there), and the relay reader port on Oracle and SQL
   Server were not run live. The orawire emulation path has no replica routing.
 - **Rebalancing scope**: online rebalancing covers SQL tables declared with the `slots` strategy; consistent-hash, list, range and date tables and
