@@ -46,7 +46,8 @@ class OracleFenceLiveTest {
         Assumptions.assumeTrue("oracle".equals(System.getenv("WARP_TEST_SHARD_ENGINE")), "set WARP_TEST_SHARD_ENGINE=oracle with the Oracle container up");
         OracleHa.fenceAdminForTesting(admin);
         EngineHa ha = EngineHa.forDialect(SourceDialect.ORACLE);
-        try (Connection c = DriverManager.getConnection(URL, "appusr", "apppw"); Statement st = c.createStatement()) {
+        Connection c = DriverManager.getConnection(URL, "appusr", "apppw");
+        try (Statement st = c.createStatement()) {
             try {
                 st.execute("drop table fence_t");
             } catch (SQLException absent) {
@@ -54,7 +55,6 @@ class OracleFenceLiveTest {
             }
             st.execute("create table fence_t (id int primary key)");
             st.execute("insert into fence_t values (1)");
-            c.commit();
             assertFalse(ha.writesFrozen(app), "a normal node is not frozen");
 
             ha.fenceStaleWriter(app);
@@ -64,15 +64,21 @@ class OracleFenceLiveTest {
             assertEquals(1035, refused.getErrorCode(), refused.getMessage());
             SQLException killed = assertThrows(SQLException.class, () -> {
                 st.execute("insert into fence_t values (2)");
-                c.commit();
-            }, "the session that was open when the node was fenced no longer works");
+                }, "the session that was open when the node was fenced no longer works");
             System.out.println("ORACLE-FENCE-NOTE open session after the fence: " + killed.getMessage().split("\n")[0]);
+        } catch (SQLException afterKill) {
+            // closing a statement on the killed session fails; that is the point
+        } finally {
+            try {
+                c.close();
+            } catch (SQLException ignored) {
+                // the session was ended by the fence
+            }
         }
         OracleHa.INSTANCE.releaseFence(app);
         assertFalse(ha.writesFrozen(app));
-        try (Connection c = DriverManager.getConnection(URL, "appusr", "apppw"); Statement st = c.createStatement()) {
+        try (Connection c2 = DriverManager.getConnection(URL, "appusr", "apppw"); Statement st = c2.createStatement()) {
             st.execute("insert into fence_t values (3)");
-            c.commit();
             var rs = st.executeQuery("select count(*) from fence_t");
             rs.next();
             assertEquals(2, rs.getInt(1), "only the writes before the fence and after the release exist");
