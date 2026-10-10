@@ -23,7 +23,7 @@ class TwoPhaseProbeEnginesLiveTest {
     }
 
     private static Probe probe(String url, String user, String password) {
-        BackendTarget t = BackendRegistry.fromConfig("default=" + url + "|" + user + "|" + password, null).resolveForRouting("default");
+        BackendTarget t = BackendRegistry.fromConfig("default=" + url.replace(";", "%3B") + "|" + user + "|" + password, null).resolveForRouting("default");
         return TwoPhaseReadiness.probe(t);
     }
 
@@ -46,8 +46,12 @@ class TwoPhaseProbeEnginesLiveTest {
             }
             Probe plain = probe(ora.jdbcUrl(), "plainuser", "plainpw1");
             assertEquals(State.NOT_READY, plain.state(), plain.detail());
-            assertTrue(plain.fix().contains("DBA_PENDING_TRANSACTIONS"));
-            try (Connection c = DriverManager.getConnection(ora.sysJdbcUrl(), ora.sysUsername(), ora.sysPassword()); Statement st = c.createStatement()) {
+            assertTrue(plain.fix().contains("DBA_PENDING_TRANSACTIONS"), plain.fix());
+            java.util.Properties asSys = new java.util.Properties();
+            asSys.put("user", "sys");
+            asSys.put("password", ora.sysPassword());
+            asSys.put("internal_logon", "sysdba");
+            try (Connection c = DriverManager.getConnection(ora.sysJdbcUrl(), asSys); Statement st = c.createStatement()) {
                 st.execute("GRANT SELECT ON SYS.DBA_PENDING_TRANSACTIONS TO plainuser");
             }
             Probe granted = probe(ora.jdbcUrl(), "plainuser", "plainpw1");

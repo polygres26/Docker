@@ -56,4 +56,23 @@ class TwoPhaseReadinessTest {
         }).check();
         assertEquals(State.UNKNOWN, reports.get(0).state());
     }
+
+    @Test
+    void recheckReportsOnlyWhatChanged() {
+        BackendRegistry registry = BackendRegistry.fromConfig("default=jdbc:postgresql://h/d|u|p;s1=jdbc:postgresql://h/a|u|p;s2=jdbc:postgresql://h/b|u|p", null);
+        var rules = new java.util.concurrent.atomic.AtomicReference<List<RouterStage.TableShardRule>>(List.of(
+                new RouterStage.TableShardRule("orders", Pattern.compile("\\borders\\b"), "id", ShardingStrategy.hash(List.of("s1", "s2")))));
+        var s2 = new java.util.concurrent.atomic.AtomicReference<>(State.NOT_READY);
+        var changes = new java.util.ArrayList<String>();
+        var readiness = new TwoPhaseReadiness(registry, rules::get, t -> new Probe(t.name().equals("s2") ? s2.get() : State.READY, "x", null));
+        readiness.transitions = changes::add;
+        readiness.recheck();
+        assertEquals(List.of("s1: null -> READY", "s2: null -> NOT_READY"), changes);
+        changes.clear();
+        readiness.recheck();
+        assertEquals(List.of(), changes);
+        s2.set(State.READY); // the setting was fixed and the node restarted
+        readiness.recheck();
+        assertEquals(List.of("s2: NOT_READY -> READY"), changes);
+    }
 }
