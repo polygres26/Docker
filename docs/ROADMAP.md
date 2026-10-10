@@ -84,6 +84,8 @@ behind Warp's "migration compatibility gateway" positioning — not a claim you 
 
 ### A published, honest trust posture
 
+*(Backend credentials in `warp_config` are encrypted with a versioned key, which can be rotated with one admin call; see [`SECURITY.md`](SECURITY.md) §1.8.)*
+
 A real security threat model covering every protocol's actual authentication mechanism and its
 fail-open/fail-closed behavior, a vulnerability disclosure and CVE response policy, documented
 architecture limits (connection pools, QoS defaults, cluster timing windows) derived from the
@@ -97,6 +99,21 @@ firewall is fail-open by default unless you author rules.
 Config-primary/standby failover with automatic failback, horizontal sharding with scatter-gather
 query fan-out, and optional multi-AZ cache clustering with AZ-aware backup placement (live-proven
 against 3 real nodes). See [`SUPPORT_AND_DEPLOYMENT.md`](SUPPORT_AND_DEPLOYMENT.md) §2.
+
+On top of that, for the SQL backends: **read replicas** with lag-aware routing and optional read-your-writes by log position;
+**failover** (Warp follows a promotion made elsewhere, or promotes a replica itself behind a lease, a majority and an optional
+external fence), **planned switchover**, **rejoin** of a returned old primary, **split-brain guards** (a replica that still hears the
+primary vetoes a promotion, stale writers are frozen, instances that missed a config change catch up, an optional write fence) and a
+**reader port** for relay mode. Postgres, MySQL and SQL Server were run live; Oracle's own promotion, switchover and rejoin have only run
+against a scripted fake. [`REPLICAS_AND_FAILOVER.md`](REPLICAS_AND_FAILOVER.md) opens with a per-engine table of what was verified.
+
+**Sharded writes and online rebalancing**: INSERT/UPDATE/DELETE routing by shard key, multi-shard writes that are atomic by two-phase
+commit where the shards support it, and the `slots` strategy with online slot rebalancing (writes held only for the moving slots,
+verified copy, crash recovery, cluster-wide hold, an optional automatic balancer, in-place conversion of a hash table), run live on
+Postgres, MySQL, SQL Server and Oracle. See [`WARP_GUIDE.md`](WARP_GUIDE.md) §8.
+
+Which protocol or backend does what, emulated or real, and what each one cannot do is in
+[`PROTOCOLS_AND_BACKENDS.md`](PROTOCOLS_AND_BACKENDS.md).
 
 ---
 
@@ -118,6 +135,16 @@ These are real, working capabilities with disclosed, scoped gaps — not aspirat
   parameter calls; REF CURSOR, multi-OUT, and package-qualified calls are refused cleanly rather
   than silently mishandled, with a scoped plan to close specific gaps rather than build a general
   transpiler.
+- **Oracle failover and switchover**: promotion, switchover and rejoin are written to Oracle's documentation and tested against a scripted
+  fake only; no Data Guard was available. Only the stale-primary fence was run against a real Oracle (Free 23ai).
+- **HA beyond Postgres and MySQL in the harder scenarios**: a shard failing over in the middle of a rebalance, two-phase commit on SQL Server
+  (a stock Linux container has no XA procedures, so multi-shard writes fall back to commit-last there), and the relay reader port on Oracle and SQL
+  Server were not run live. The orawire emulation path has no replica routing.
+- **Rebalancing scope**: online rebalancing covers SQL tables declared with the `slots` strategy; consistent-hash, list, range and date tables and
+  the non-SQL stores (DynamoDB, MongoDB, SQS, OpenSearch, ...) still do not move data when their shard set changes. It balances row counts, not
+  query load, and is not self-managing the way a distributed database is.
+- **Config writes**: failover and rebalancing use a locked read-modify-write of `warp_config`; several admin endpoints still do a plain
+  read-then-write that can drop a concurrent change.
 - **Dependency vulnerability scanning**: not yet wired into the build — see
   [`SECURITY.md`](SECURITY.md) §3 for this and the rest of the prioritized security backlog.
 
@@ -135,8 +162,6 @@ These are real, working capabilities with disclosed, scoped gaps — not aspirat
   [`SECURITY.md`](SECURITY.md) is real and actionable today; formal CNA status (so a real CVE can
   be requested through a project-run process rather than GitHub's general flow) is a near-term,
   not-yet-started follow-up.
-- **Encryption-key rotation** for backend credentials stored in `warp_config` — a confirmed,
-  disclosed gap in the current secrets-at-rest design (see [`SECURITY.md`](SECURITY.md) §1.8).
 - **Broader emulator-workflow productization**: disposable-environment support and migration
   rehearsal are real today; fault injection/latency simulation and a CI-native CLI wrapping the
   whole workflow remain scoped, not-yet-built extensions of the same real foundation.

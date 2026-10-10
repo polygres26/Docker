@@ -334,6 +334,11 @@ frontends (DynamoDB, MongoDB, SQS, OpenSearch, InfluxDB, S3) now shard across th
 set that enable them — see §4.7; `WARP_SHARD_BACKENDS` remains the fallback when no backend enables
 the store.
 
+Declarative table sharding (`WARP_TABLE_SHARDS`) has its own detail under §8: routing by shard key, INSERT/UPDATE/DELETE routing, atomic multi-shard
+writes, the `slots` strategy with online rebalancing, hash-to-slots conversion, the automatic balancer, and how all of that behaves next to
+replicas, failover and a crash. Read replicas, failover and switchover are in
+[REPLICAS_AND_FAILOVER.md](REPLICAS_AND_FAILOVER.md), which opens with a per-engine table of what was verified live.
+
 ### 4.3 Cross-shard / cross-backend JOIN federation
 
 §4.2's scatter-gather path has a real, silent correctness gap: it broadcasts identical SQL to
@@ -717,7 +722,7 @@ solves what it's actually solved, not by engine-level vibes:
 | Store | Protocol | Can target a non-default backend | Table DDL | Query logic (INSERT/SELECT/UPDATE) |
 |---|---|---|---|---|
 | `PgItemStore` | dynamowire | Yes (`WARP_SHARD_BACKENDS`) | **Real DDL for all 4 engines**, live-verified (`CreateTable` actually succeeds against real Oracle/SQL Server/MySQL instances) | Postgres-only (`ON CONFLICT`, `::jsonb` casts — a real, live-confirmed failure on MySQL: `PutItem` still fails past `CreateTable`) |
-| `PgTimeSeriesStore` | influxwire | No (default-backend only) | Real DDL exists for all 4 engines (each engine's own `CREATE TABLE ddl/<engine>/influxwire_measurement_table.sql`, live-verified directly against real Oracle/SQL Server/MySQL) but unreachable in practice until shard routing is added | Postgres-only (`->`/`->>` jsonb operators, `date_bin()`) |
+| `PgTimeSeriesStore` | influxwire | Postgres hosts of its backend set only (series are hash-sharded over the hosts that enabled the `influxdb` store; no non-Postgres engine) | Real DDL exists for all 4 engines (each engine's own `CREATE TABLE ddl/<engine>/influxwire_measurement_table.sql`, live-verified directly against real Oracle/SQL Server/MySQL) but the store does not use them: stores are enabled on Postgres backends only | Postgres-only (`->`/`->>` jsonb operators, `date_bin()`) |
 | `PgQueueStore` | sqswire | Yes (`WARP_SHARD_BACKENDS`) | **Real DDL for all 4 engines**, live-verified | **Real query support for all 4 engines**, live-verified end to end — CreateQueue, SendMessage, ReceiveMessage (including FIFO group-exclusion and dedup), DeleteMessage, ChangeMessageVisibility, GetQueueAttributes, DeleteQueue, against real Oracle/SQL Server/MySQL instances |
 | `PgGraphStore` | Bolt/Cypher graph frontend | No (default-backend only) | Postgres-only — the `labels TEXT[]` array column has no cross-engine equivalent at all; a real port needs a schema redesign (JSON array column or a normalized join table), not a syntax swap | Postgres-only |
 
@@ -3570,6 +3575,7 @@ sent anywhere else.
 | ACL | `warp_config.aclRules`/PPv2 settings (§3.1) |
 | OAuth | OIDC issuer/audience/claim-mapping config (§3.4) |
 | Backend sets | `/api/backend-sets` — the single place backends live (§4.7): sets and their backends (type, masked target, description, enabled-store tags, health), add/edit/test/delete a backend inside a set, "Enable stores" for Postgres backends (with sharding and Neo4j-once notes), create/delete sets; router aliases and the legacy shard group under "Advanced". `/backends` redirects here |
+| Replicas and failover | `/api/failover`, `/api/replicas` — per primary: every replica's lag, eligibility and reads routed, why reads stayed on the primary, the recent failover events, and the operator actions (evaluate now, planned switchover) (see [REPLICAS_AND_FAILOVER.md](REPLICAS_AND_FAILOVER.md)) |
 | Queues | sqswire's queues — live depth (visible/in-flight), FIFO/DLQ attributes, resolved shard backend, delete action; polls every 5s |
 | Data Explorer | object browser + ad-hoc SQL console against any configured backend, bypassing the wire pipeline (firewall/ACL don't apply — gated the same way as every other admin route instead) |
 | Router rules | `RouterStage` schema/predicate/value-shard rules |
@@ -3879,7 +3885,7 @@ Unmodified Kafka clients connect with `bootstrap.servers=warp-host:19092`: the J
 - **Not implemented** (each listed with its reason in `Warp/tests/python/kafka_conformance/kf_known.py`): transactions and exactly-once (`InitProducerId` with a `transactional.id` answers `UNSUPPORTED_VERSION`;
   AddPartitionsToTxn, AddOffsetsToTxn, EndTxn, TxnOffsetCommit are not advertised), log compaction, `message.timestamp.type=LogAppendTime` rewriting, produce down-conversion of magic 0 / 1 (rejected with
   `INVALID_RECORD`, as Kafka 4 does for Produce v3+), fetch sessions, the new consumer group protocol and share groups, ACLs, quotas, `DescribeTopicPartitions`, `DescribeLogDirs`, partition reassignment,
-  replication factors above 1, consumer offset expiry, TLS.
+  replication factors above 1, consumer offset expiry. (TLS is implemented: a second `SSL` listener, see §3.)
 - **Verified against a real Apache Kafka 4.3.1** (`Warp/tests/python/kafka_conformance/`, run by `test_kafka_conformance.py`). `kf_corpus.py` holds 32 cases: raw-protocol requests built at explicit versions (the
   official Kafka message schemas shipped with kafka-python are used to encode and decode them) for ApiVersions, Metadata (v1-12, topic ids, auto creation), CreateTopics / DeleteTopics / CreatePartitions,
   DescribeConfigs / AlterConfigs / IncrementalAlterConfigs, Produce (acks, validation, all four codecs, idempotent sequences and epochs), Fetch (versions 4-12, limits, long polls, out-of-range), ListOffsets
@@ -4023,7 +4029,7 @@ functions; the query-plan and partition-key-ranges endpoints and the database ac
 or `WARP_COSMOSWIRE_ADVERTISED_URL`).
 
 **What does not.** Stored procedures, triggers and UDFs are stored but **never executed** (501 / 400): there is no JavaScript engine. No feed
-ranges / EPK ranges (so hierarchical-key prefix queries through the SDKs), no full-fidelity change feed, no users/permissions, no TLS, no RU
+ranges / EPK ranges (so hierarchical-key prefix queries through the SDKs), no full-fidelity change feed, no users/permissions, no RU
 throttling, and the indexing policy is stored but not used. The complete list is in `tests/python/cosmos_conformance/cosmos_known.md`. **cosmoswire
 has not been compared with a real Cosmos DB service or emulator**; it was tested with the Python SDK, documentation-derived expectations and a
 randomized differential test.

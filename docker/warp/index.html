@@ -903,6 +903,26 @@
         <li><span class="uc-body"><span class="uc-title">Planned switchover and rejoin</span><span class="uc-desc">An operator-requested switchover waits for the target to catch up, swaps the roles and brings the old primary back as a replica (Postgres, MySQL and SQL Server; Oracle opt-in, unverified). A returned old primary is rejoined by Warp where the engine allows it, or reported as needing a rebuild with the exact steps.</span></span></li>
 </ul>
       <p class="rttNote">
+        <b>What was verified, per engine.</b> "Live" means it ran against a real server of that engine in this
+        project's tests; "fake only" means a scripted stand-in for the database, never the real thing. The full
+        table, with the tests behind it, is in <code>docs/REPLICAS_AND_FAILOVER.md</code> in the Docker repository.
+      </p>
+      <table class="rttTable">
+        <thead>
+          <tr><th>Capability</th><th>Postgres</th><th>MySQL</th><th>SQL Server</th><th>Oracle</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Read replicas, lag-aware routing</td><td>Live</td><td>Live</td><td>Live</td><td>Not run</td></tr>
+          <tr><td>Failover-follow and promote</td><td>Live</td><td>Live</td><td>Live</td><td>Follow not run; promote opt-in, fake only</td></tr>
+          <tr><td>Planned switchover</td><td>Live</td><td>Live</td><td>Live</td><td>Opt-in, fake only</td></tr>
+          <tr><td>Rejoin a returned old primary</td><td>Live</td><td>Live</td><td>Live</td><td>Fake only</td></tr>
+          <tr><td>Split-brain guards (replica veto, freeze stale primary)</td><td>Live</td><td>Live</td><td>Live</td><td>Freeze live on Oracle Free; no veto</td></tr>
+          <tr><td>Atomic multi-shard writes (two-phase commit)</td><td>Live</td><td>Live</td><td>Fallback only</td><td>Live</td></tr>
+          <tr><td>Online slot rebalancing</td><td>Live</td><td>Live</td><td>Live</td><td>Live</td></tr>
+        </tbody>
+      </table>
+
+      <p class="rttNote">
         <b>Every wire protocol participates — Postgres, SQL Server, MySQL, Oracle, MongoDB,
         DynamoDB, SQS, and OpenSearch alike.</b> Drain/undrain, fallback redirection, and
         auto-failover all resolve backends through the same registry lookup every protocol's
