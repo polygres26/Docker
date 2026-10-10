@@ -455,7 +455,11 @@ qualifier needed anywhere), and the router picks the real fastest path per state
   procedures) Warp falls back, with a one-time WARN per table, to **commit-last**: the statement runs on every shard in an open local transaction, every shard is
   rolled back if any rejects it, and the shards are then committed one after another. What remains is a failure while committing the second or a later shard,
   reported with how many had committed (`ERR_SHARD_WRITE_PARTIAL`). `WARP_SHARD_WRITE_2PC=required` refuses instead of falling back
-  (`ERR_SHARD_WRITE_2PC_REQUIRED`). **Reads inside a write**: each shard sees only its own rows, so an `UPDATE`/`DELETE` that also reads another sharded table, or the
+  (`ERR_SHARD_WRITE_2PC_REQUIRED`). **Startup check**: Warp reads each shard's own setting at startup (Postgres `max_prepared_transactions`; SQL Server: the JDBC XA
+  procedures in `master`; Oracle: read access to `DBA_PENDING_TRANSACTIONS`; MySQL/MariaDB: InnoDB present, the `XA RECOVER` privilege is not checked), logs a WARN naming
+  the shard, the tables and the fix for any that cannot do two-phase commit (an ERROR when `WARP_SHARD_WRITE_2PC=required`), and serves the result at
+  `GET /api/sharding/2pc`. A probe that cannot run is reported `UNKNOWN`, never ready; the check runs once at start, so re-read the endpoint after changing a shard's
+  setting. Live-verified on Postgres only (setting 50 versus 0); the other engines' probes are unit-tested but not run against a real server. **Reads inside a write**: each shard sees only its own rows, so an `UPDATE`/`DELETE` that also reads another sharded table, or the
   same one twice (a join, `FROM`/`USING`, a subquery), is refused (`ERR_SHARD_WRITE_READS_SHARDED`); other tables are assumed to be present in full on every shard.
   Live-verified: Postgres and MySQL (2PC, with replicas and failovers), Oracle Free 23ai (2PC, grants applied); SQL Server 2022 on Linux has no XA support in a stock
   container, so there the commit-last fallback was verified and client transactions that need XA were not. Shard groups are homogeneous, so mixed-engine shards
