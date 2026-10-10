@@ -79,13 +79,85 @@ final class OracleHa implements EngineHa {
         return controlEnabled();
     }
 
-    /** Warp never promotes Oracle, so the "does a standby still hear from the primary" check has nothing to guard (the default, empty,
-     * means no evidence). Stopping a stale Oracle primary taking writes is not attempted: a Data Guard primary cannot be demoted over
-     * SQL and there is no live Oracle here to verify a restricted-session approach on. */
+    /**
+     * Stops a stale, still writable Oracle primary taking writes: {@code ALTER SYSTEM ENABLE RESTRICTED SESSION} (only users with the
+     * RESTRICTED SESSION privilege can log in -- an application account does not have it -- and a login refused with ORA-01035 is what
+     * {@link #writesFrozen} recognises), then every other user session is ended, because sessions that were already open are not affected by
+     * the restriction. Needs a SYSDBA account (the backend user as {@code SYS}, or the account in {@code WARP_ORACLE_FENCE_USER}), runs in the container the URL names (a pluggable database
+     * is restricted on its own), restarts nothing, and is reversed by {@link #releaseFence}. It is a guard against divergence until the node
+     * is rebuilt as a standby, not a demotion: the database stays open READ WRITE for administrators.
+     * <b>Verified against Oracle Free 23ai (no Data Guard needed for this part).</b>
+     */
     @Override
-    public void fenceStaleWriter(BackendTarget node) {
-        throw new UnsupportedOperationException("Warp has no verified SQL to stop an Oracle primary taking writes; stop it or convert "
-                + "it to a standby with Data Guard (DGMGRL / ALTER DATABASE CONVERT TO PHYSICAL STANDBY)");
+    public void fenceStaleWriter(BackendTarget node) throws SQLException {
+        BackendTarget admin = adminTarget(node);
+        sql.exec(admin, true, "ALTER SYSTEM ENABLE RESTRICTED SESSION");
+        // the restriction came first, so nobody new gets in while the open sessions are ended; a session that ends on its own meanwhile is not an error
+        for (int round = 0; round < 3; round++) {
+            java.util.List<String> sessions = sql.list(admin, true, "SELECT sid || ',' || serial# FROM v$session WHERE type = 'USER' "
+                    + "AND username IS NOT NULL AND username NOT IN ('SYS', 'SYSTEM') AND sid <> SYS_CONTEXT('USERENV', 'SID')");
+            if (sessions.isEmpty()) {
+                break;
+            }
+            for (String sidSerial : sessions) {
+                if (!sidSerial.matches("\\d+,\\d+")) {
+                    continue; // never put anything but a sid,serial# into the statement
+                }
+                try {
+                    sql.exec(admin, true, "ALTER SYSTEM KILL SESSION '" + sidSerial + "' IMMEDIATE");
+                } catch (SQLException gone) {
+                    log.debug("oracle fence: session {} ended before it was killed: {}", sidSerial, gone.getMessage());
+                }
+            }
+        }
+        if (!writesFrozen(node)) {
+            // a backend user that holds RESTRICTED SESSION (any DBA does) still gets in: Warp's own traffic would not be stopped
+            releaseFence(node);
+            throw new SQLException("restricting sessions did not stop the backend user '" + node.user() + "' from logging in (it holds the RESTRICTED SESSION "
+                    + "privilege, or the node is not reachable): use an application account without that privilege for the backend, and set "
+                    + "WARP_ORACLE_FENCE_USER / WARP_ORACLE_FENCE_PASSWORD to a SYSDBA account for fencing. The restriction was lifted again");
+        }
+    }
+
+    /** The account used to fence: {@code WARP_ORACLE_FENCE_USER} / {@code WARP_ORACLE_FENCE_PASSWORD} (a SYSDBA account) if set, else the node's own. */
+    private static volatile BackendTarget adminForTesting;
+
+    /** Tests only: the SYSDBA account to fence with, instead of the environment. */
+    static void fenceAdminForTesting(BackendTarget admin) {
+        adminForTesting = admin;
+    }
+
+    private static BackendTarget adminTarget(BackendTarget node) {
+        BackendTarget forTest = adminForTesting;
+        if (forTest != null) {
+            return forTest;
+        }
+        String user = System.getenv("WARP_ORACLE_FENCE_USER");
+        if (user == null || user.isBlank()) {
+            return node;
+        }
+        return new BackendTarget(node.name(), node.jdbcUrl(), user.trim(), System.getenv().getOrDefault("WARP_ORACLE_FENCE_PASSWORD", ""));
+    }
+
+    /** Undoes {@link #fenceStaleWriter}: logins are allowed again. */
+    void releaseFence(BackendTarget node) throws SQLException {
+        sql.exec(adminTarget(node), true, "ALTER SYSTEM DISABLE RESTRICTED SESSION");
+    }
+
+    /**
+     * True when an ordinary login is refused with ORA-01035 ("only available to users with RESTRICTED SESSION privilege"): the node is up and
+     * open for administrators but closed to applications, which is how {@link #fenceStaleWriter} leaves it. Any other answer (a login that works,
+     * a node that is down, a wrong password) is false. Applied to nodes listed as replicas only, never to the configured primary.
+     */
+    @Override
+    public boolean writesFrozen(BackendTarget node) {
+        try (Connection c = connect(node)) {
+            return false;
+        } catch (SQLException e) {
+            return e.getErrorCode() == 1035;
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     // ---- pure logic ---------------------------------------------------------------------------
@@ -225,6 +297,92 @@ final class OracleHa implements EngineHa {
         return v == null || v.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(new java.math.BigDecimal(v.trim()).toBigInteger());
     }
 
+    private final java.util.Set<String> rejoinsRunning = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * A node that used to be the primary is back while {@code currentPrimary} is writable. Making it a physical standby again needs the host (the
+     * database is shut down, flashed back to just before the standby became primary, converted and started mounted), so Warp does the SQL around it
+     * and leaves that step to {@code WARP_FAILOVER_REJOIN_COMMAND} -- typically {@code dgmgrl "REINSTATE DATABASE ..."} or a script of
+     * {@code FLASHBACK DATABASE TO SCN $WARP_REJOIN_STANDBY_BECAME_PRIMARY_SCN} and {@code ALTER DATABASE CONVERT TO PHYSICAL STANDBY}. Without
+     * the command the answer is {@code NEEDS_REBUILD} with those instructions. The command gets {@code WARP_REJOIN_STANDBY_BECAME_PRIMARY_SCN}
+     * (from the current primary) and {@code WARP_REJOIN_DIVERGED} ({@code true} when the old primary committed past it, which the flashback
+     * discards). A node that is already a physical standby with redo apply running is left alone. <b>Written to Oracle's documentation and tested
+     * against a scripted fake only; never run against a real Data Guard.</b>
+     */
+    @Override
+    public RejoinResult rejoin(BackendTarget node, BackendTarget currentPrimary) throws Exception {
+        String role = String.valueOf(sql.one(node, false, "SELECT database_role FROM v$database")).trim().toUpperCase(java.util.Locale.ROOT);
+        if (role.equals("PHYSICAL STANDBY")) {
+            if (applyRunning(node)) {
+                return RejoinResult.of(RejoinOutcome.NOT_NEEDED, "already a physical standby with redo apply running");
+            }
+            return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "it is a physical standby but redo apply is not running; start it with ALTER DATABASE RECOVER MANAGED STANDBY DATABASE USING CURRENT LOGFILE DISCONNECT, or reinstate it with the broker");
+        }
+        String scn = null;
+        try {
+            scn = sql.one(currentPrimary, false, "SELECT standby_became_primary_scn FROM v$database");
+        } catch (SQLException e) {
+            log.debug("oracle rejoin: could not read STANDBY_BECAME_PRIMARY_SCN: {}", e.getMessage());
+        }
+        String command = System.getenv("WARP_FAILOVER_REJOIN_COMMAND");
+        if (command == null || command.isBlank()) {
+            return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "it is a " + role.toLowerCase(java.util.Locale.ROOT) + " that is not following the current "
+                    + "primary. Reinstate it with the Data Guard broker (dgmgrl REINSTATE DATABASE), or flash it back to SCN " + (scn == null ? "<STANDBY_BECAME_PRIMARY_SCN of the "
+                    + "new primary>" : scn) + " and convert it to a physical standby (FLASHBACK DATABASE TO SCN ...; ALTER DATABASE CONVERT TO PHYSICAL STANDBY), "
+                    + "which discards whatever it committed after that. Set WARP_FAILOVER_REJOIN_COMMAND to a command that does it to have Warp run it");
+        }
+        if (!rejoinsRunning.add(node.jdbcUrl())) {
+            return RejoinResult.of(RejoinOutcome.NOT_NEEDED, "a rejoin of this node is already running");
+        }
+        try {
+            boolean diverged = false;
+            try {
+                String own = sql.one(node, false, "SELECT current_scn FROM v$database");
+                diverged = scn != null && own != null && new java.math.BigDecimal(own.trim()).compareTo(new java.math.BigDecimal(scn.trim())) > 0;
+            } catch (SQLException | NumberFormatException e) {
+                log.debug("oracle rejoin: divergence not determined: {}", e.getMessage());
+            }
+            try {
+                fenceStaleWriter(node); // no more writes while it is being rebuilt; the command restarts it anyway
+            } catch (SQLException | UnsupportedOperationException e) {
+                log.warn("oracle rejoin: could not fence {} before the rebuild: {}", BackendSetModel.maskUrl(node.jdbcUrl()), e.getMessage());
+            }
+            java.util.Map<String, String> env = new java.util.HashMap<>();
+            env.put("WARP_REJOIN_STANDBY_BECAME_PRIMARY_SCN", scn == null ? "" : scn.trim());
+            env.put("WARP_REJOIN_DIVERGED", String.valueOf(diverged));
+            String failure = RejoinCommand.run(command, node, currentPrimary, RejoinCommand.timeoutSeconds(), 1521, env);
+            if (failure != null) {
+                return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, failure);
+            }
+            long deadline = System.currentTimeMillis() + rejoinWaitMillis;
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    if ("PHYSICAL STANDBY".equals(String.valueOf(sql.one(node, false, "SELECT database_role FROM v$database")).trim().toUpperCase(java.util.Locale.ROOT))
+                            && applyRunning(node)) {
+                        return RejoinResult.of(RejoinOutcome.REJOINED, "rebuilt by the rejoin command as a physical standby of the current primary"
+                                + (diverged ? "; what it had committed past SCN " + scn + " was discarded" : ""));
+                    }
+                } catch (SQLException e) {
+                    log.debug("oracle rejoin: not up yet: {}", e.getMessage());
+                }
+                Thread.sleep(Math.min(2000, rejoinWaitMillis));
+            }
+            return RejoinResult.of(RejoinOutcome.NEEDS_REBUILD, "the rejoin command finished, but the node is not a physical standby applying redo after "
+                    + rejoinWaitMillis / 1000 + " s");
+        } finally {
+            rejoinsRunning.remove(node.jdbcUrl());
+        }
+    }
+
+    /** True when the managed recovery process (MRP) of a standby is running, i.e. redo is being applied. */
+    private static boolean applyRunning(BackendTarget standby) throws SQLException {
+        String n = sql.one(standby, false, "SELECT COUNT(*) FROM v$managed_standby WHERE process LIKE 'MRP%'");
+        return n != null && !n.trim().equals("0");
+    }
+
+    /** How long a rejoin waits after its command for the node to be a working standby; tests shorten it. */
+    static volatile long rejoinWaitMillis = 180_000;
+
     // ---- driving Data Guard with SQL (opt-in, UNVERIFIED against a real Data Guard configuration) ---------------------------
 
     /** The statements a switchover and a failover are made of, run as SYSDBA. A seam so the sequence can be tested without a database. */
@@ -233,6 +391,12 @@ final class OracleHa implements EngineHa {
         String one(BackendTarget node, boolean sysdba, String query) throws SQLException;
 
         void exec(BackendTarget node, boolean sysdba, String statement) throws SQLException;
+
+        /** The first column of every row. */
+        default java.util.List<String> list(BackendTarget node, boolean sysdba, String query) throws SQLException {
+            String first = one(node, sysdba, query);
+            return first == null ? java.util.List.of() : java.util.List.of(first);
+        }
     }
 
     private static final Sql JDBC = new Sql() {
@@ -263,6 +427,17 @@ final class OracleHa implements EngineHa {
             try (Connection c = open(node, sysdba); Statement st = c.createStatement()) {
                 st.execute(statement);
             }
+        }
+
+        @Override
+        public java.util.List<String> list(BackendTarget node, boolean sysdba, String query) throws SQLException {
+            java.util.List<String> out = new java.util.ArrayList<>();
+            try (Connection c = open(node, sysdba); Statement st = c.createStatement(); ResultSet rs = st.executeQuery(query)) {
+                while (rs.next()) {
+                    out.add(rs.getString(1));
+                }
+            }
+            return out;
         }
     };
 

@@ -165,11 +165,11 @@ class OracleHaTest {
     }
 
     @Test
-    void oracleHasNoStandbyEvidenceAndSaysItCannotFreezeAStaleWriter() throws Exception {
+    void oracleHasNoStandbyEvidenceAndAFenceThatCannotReachTheNodeFailsClearly() throws Exception {
         EngineHa ha = EngineHa.forDialect(SourceDialect.ORACLE);
-        BackendTarget n = new BackendTarget("o", "jdbc:oracle:thin:@//h:1521/svc", "u", "p");
+        BackendTarget n = new BackendTarget("o", "jdbc:oracle:thin:@//127.0.0.1:1/svc", "u", "p");
         assertTrue(ha.heardFromPrimarySecondsAgo(n, n).isEmpty());
-        var e = org.junit.jupiter.api.Assertions.assertThrows(UnsupportedOperationException.class, () -> ha.fenceStaleWriter(n));
-        assertTrue(e.getMessage().contains("Oracle"));
+        org.junit.jupiter.api.Assertions.assertThrows(java.sql.SQLException.class, () -> ha.fenceStaleWriter(n));
+        assertFalse(ha.writesFrozen(n), "a node that cannot be reached is not 'frozen'");
     }
 }
