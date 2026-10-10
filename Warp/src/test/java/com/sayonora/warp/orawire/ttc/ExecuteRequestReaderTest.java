@@ -1,6 +1,7 @@
 package com.sayonora.warp.orawire.ttc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
@@ -160,5 +161,17 @@ class ExecuteRequestReaderTest {
         assertEquals((int) 'C', result.getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
                 "test fixture must actually hit the collision (length == first char's ASCII value) to be meaningful");
         return result;
+    }
+
+    @Test
+    void aLowerCaseStatementInARealSqlPlus23aiExecuteIsFoundByTheScanningFallback() {
+        // The Execute request a real SQL*Plus 23ai sends for "select 1 from dual" (captured live through a byte relay). Its layout is not the
+        // one read() expects, so the scanning fallback has to find the statement, and the statement is lower case as typed
+        byte[] payload = java.util.HexFormat.of().parseHex("0000035e1200007b0500000b000000000000006180000000000000feffffffffffffff1200000000000000feffffffffffffff0d00000000000000fefffffffffffffffeffffffffffffff00000000010000000000000000000000000000000000000000000000000000000000000000000000feffffffffffffff0000000000000000fefffffffffffffffeffffffffffffffc8e5b021000000000000000000000000fefffffffffffffffeffffffffffffff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001273656c65637420312066726f6d206475616c01000000000000000000000000000000000000000000000000000000010000000000000000800000000000000000000000000000");
+
+        ExecuteRequest request = ExecuteRequestReader.readByScanningForSql(payload);
+
+        assertEquals("select 1 from dual", request.sqlText);
+        assertTrue(request.isQuery());
     }
 }

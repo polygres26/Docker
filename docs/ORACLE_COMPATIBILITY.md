@@ -42,13 +42,11 @@ Oracle database, including cross-database DATABASE LINK queries.
 | Python apps | ✅ Works normally | ✅ Works normally |
 | Java apps (JDBC) | ✅ Works normally | ✅ Works normally |
 | SQLcl | ✅ Works normally | ✅ Works normally |
-| SQL\*Plus | ⚠️ Connects, but hangs | ⚠️ Connects, but hangs |
+| SQL\*Plus | ⚠️ Plain, multi-column, DDL and DML statements work (re-tested 2026-10-10 with SQL\*Plus 23ai); a query returning a DATE column (e.g. `sysdate`) still hangs | ⚠️ Same as the Oracle target |
 | DATABASE LINK queries | ⚠️ Connects, but hangs | Not applicable — the target database has no DATABASE LINK feature to translate to |
 
 In this mode, Python, Java (JDBC), and SQLcl all work reliably against either target. SQL\*Plus
-does not yet work reliably in this mode against either target — we recommend using a Python or
-Java-based tool instead until this is resolved. DATABASE LINK queries in this mode are not yet
-supported.
+works for statements that do not return a DATE column; a DATE-returning query still hangs it, so use a Python or Java-based tool for those until this is resolved. A `table@link` query is not supported in this mode (the link name is not routed anywhere); in Bridge mode a real Oracle `DATABASE LINK` works because the SQL goes to the real Oracle unchanged.
 
 ## What this means for you
 

@@ -51,6 +51,10 @@ public final class RealOracle implements AutoCloseable {
         return oracle;
     }
 
+    public String containerName() {
+        return containerName;
+    }
+
     public String host() {
         return "localhost";
     }
