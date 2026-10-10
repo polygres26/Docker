@@ -466,7 +466,8 @@ public final class RoutingBackendExecutor implements BackendExecutor {
             if (WARNED_NO_2PC.add(rule.tableName())) {
                 log.warn("shard write: the shards of '{}' do not support two-phase commit ({}); multi-shard writes are rolled back "
                         + "together if any shard rejects the statement, but a failure while committing can leave some shards committed. "
-                        + "Set WARP_SHARD_WRITE_2PC=required to refuse instead", rule.tableName(), unavailable.getMessage());
+                        + "Set WARP_SHARD_WRITE_2PC=required to refuse instead. GET /api/sharding/2pc says what each shard needs",
+                        rule.tableName(), unavailable.getMessage());
             }
             return writeCommitLast(work, rule.tableName());
         }

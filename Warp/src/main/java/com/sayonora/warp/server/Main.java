@@ -681,6 +681,17 @@ public final class Main {
                     }
                 }, reshardCoordination);
         metricsServer.setSlotRebalancer(slotRebalancer);
+        com.sayonora.warp.core.TwoPhaseReadiness twoPhase = new com.sayonora.warp.core.TwoPhaseReadiness(backendRegistry, routerStage::tableShardRules);
+        metricsServer.setTwoPhaseReadiness(twoPhase);
+        Thread twoPhaseCheck = new Thread(() -> {
+            try {
+                twoPhase.checkAndLog();
+            } catch (RuntimeException e) {
+                log.warn("two-phase commit readiness check failed: {}", e.toString());
+            }
+        }, "warp-2pc-readiness");
+        twoPhaseCheck.setDaemon(true);
+        twoPhaseCheck.start();
         if (reshardCoordination != null) {
             // a move whose mover crashed leaves copies on the wrong shard: the first instance to notice its lapsed hold cleans up
             java.util.concurrent.ScheduledExecutorService recovery = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {

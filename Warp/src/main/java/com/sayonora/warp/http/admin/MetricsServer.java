@@ -1,5 +1,6 @@
 package com.sayonora.warp.http.admin;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.sayonora.warp.config.ConfigStore;
@@ -88,6 +89,11 @@ public final class MetricsServer {
     private com.sayonora.warp.core.QueryRepairStage queryRepairStage;
 
     private volatile com.sayonora.warp.core.SlotRebalancer slotRebalancer;
+    private volatile com.sayonora.warp.core.TwoPhaseReadiness twoPhaseReadiness;
+
+    public void setTwoPhaseReadiness(com.sayonora.warp.core.TwoPhaseReadiness readiness) {
+        this.twoPhaseReadiness = readiness;
+    }
 
     private volatile com.sayonora.warp.core.AutoBalancer autoBalancer;
 
@@ -891,6 +897,17 @@ public final class MetricsServer {
                     }
                     response.setContentType("application/json; charset=utf-8");
                     try {
+                        if ("/api/sharding/2pc".equals(target) && "GET".equals(request.getMethod()) && twoPhaseReadiness != null) {
+                            response.setStatus(HttpServletResponse.SC_OK);
+                            JsonObject out = new JsonObject();
+                            JsonArray shards = new JsonArray();
+                            twoPhaseReadiness.check().forEach(r -> shards.add(r.toJson()));
+                            out.addProperty("writeMode", "required".equalsIgnoreCase(System.getenv("WARP_SHARD_WRITE_2PC")) ? "required" : "two-phase commit when possible, else commit-last");
+                            out.add("backends", shards);
+                            response.getWriter().write(out.toString());
+                            baseRequest.setHandled(true);
+                            return;
+                        }
                         if ("/api/sharding".equals(target) && "GET".equals(request.getMethod())) {
                             response.setStatus(HttpServletResponse.SC_OK);
                             JsonObject described = slotRebalancer.describe();
