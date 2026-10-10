@@ -320,7 +320,13 @@ public final class ExecuteRequestReader {
                     break;
                 }
                 for (int j = 0; j < needle.length; j++) {
-                    if (payload[i + j] != needle[j]) {
+                    // SQL keywords are case-insensitive: a client sends the statement exactly as typed ("select 1 from dual" from SQL*Plus),
+                    // and matching only the upper-case form made every lower-case statement fail with "could not locate a SQL statement"
+                    int b = payload[i + j];
+                    if (b >= 'a' && b <= 'z') {
+                        b -= 'a' - 'A';
+                    }
+                    if (b != needle[j]) {
                         continue outer;
                     }
                 }
