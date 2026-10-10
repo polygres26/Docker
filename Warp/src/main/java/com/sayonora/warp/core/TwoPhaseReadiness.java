@@ -20,7 +20,7 @@ import org.slf4j.LoggerFactory;
  * committed and others not.
  *
  * <p>Read-only probes, one per engine: Postgres reads {@code max_prepared_transactions}; SQL Server looks for the JDBC XA extended
- * procedures in {@code master}; Oracle reads {@code DBA_PENDING_TRANSACTIONS} (the privilege XA recovery needs); MySQL/MariaDB checks
+ * procedures in {@code master}; Oracle reads {@code DBA_PENDING_TRANSACTIONS} (what XA crash recovery needs; prepare and commit themselves run without it); MySQL/MariaDB checks
  * InnoDB is present (XA needs it; the {@code XA RECOVER} privilege is not checked). A probe that cannot run is {@code UNKNOWN}, never
  * {@code READY}: the check only claims what it saw.
  */
@@ -179,8 +179,8 @@ public final class TwoPhaseReadiness {
             return interpret(d, rs.getString(1));
         } catch (Exception e) {
             if (d == SourceDialect.ORACLE) {
-                return new Probe(State.NOT_READY, "cannot read DBA_PENDING_TRANSACTIONS: " + e.getMessage(),
-                        "GRANT SELECT ON DBA_PENDING_TRANSACTIONS, FORCE ANY TRANSACTION and EXECUTE ON DBMS_XA to the Warp user");
+                return new Probe(State.NOT_READY, "cannot read DBA_PENDING_TRANSACTIONS (" + e.getMessage().strip() + "); two-phase commit can run but a crash between prepare and commit could not be recovered",
+                        "as SYS: GRANT SELECT ON SYS.DBA_PENDING_TRANSACTIONS, SELECT ON SYS.DBA_2PC_PENDING and FORCE ANY TRANSACTION to the Warp user");
             }
             return new Probe(State.UNKNOWN, "the probe failed: " + e.getMessage(), null);
         }
