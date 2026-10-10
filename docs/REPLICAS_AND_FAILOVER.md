@@ -189,6 +189,18 @@ transport already configured in both directions; the standby open read only with
 - Not done: other standbys are not repointed (a standby follows its primary through the Data Guard configuration), a returned old primary is not
   rejoined, and a stale second primary cannot be stopped with SQL.
 
+### Oracle: fencing a stale primary and rejoining it
+
+`fenceStaleWriter` (used when a failover left an old primary writable) runs `ALTER SYSTEM ENABLE RESTRICTED SESSION` in the container the URL names and then ends every
+other user session, so applications cannot write; logins are refused with ORA-01035, which `writesFrozen` recognises, so the node is treated as read-only and not as a
+second writer. It needs a SYSDBA account (`WARP_ORACLE_FENCE_USER` / `WARP_ORACLE_FENCE_PASSWORD`, else the backend user) and, for Warp's own traffic to be stopped too, a
+backend user **without** the RESTRICTED SESSION privilege (a DBA has it): after restricting, Warp tries an ordinary login and, if it still works, lifts the restriction
+and reports why. It restarts nothing and is lifted with `ALTER SYSTEM DISABLE RESTRICTED SESSION`. `rejoin` finds the SCN the new primary became primary at, passes it to
+`WARP_FAILOVER_REJOIN_COMMAND` (`WARP_REJOIN_STANDBY_BECAME_PRIMARY_SCN`, and `WARP_REJOIN_DIVERGED=true` when the old primary committed past it, which the flashback
+discards), fences the node while the command runs, and waits for the node to be a physical standby with redo apply running; with no command it answers `NEEDS_REBUILD` with
+the `REINSTATE DATABASE` / flashback-and-convert steps. Tested against a scripted fake (statement order, that only `sid,serial#` text reaches a `KILL SESSION`, the separate
+fence account, the rejoin decisions). The fence against a real Oracle Free 23ai is covered by `OracleFenceLiveTest`; **the rejoin has never run against a real Data Guard**.
+
 ## SQL Server Availability Groups (follow, promote and planned switchover)
 
 **Verification status:** exercised live (`SqlServerAgLiveTest`) against SQL Server 2022 Developer in a
