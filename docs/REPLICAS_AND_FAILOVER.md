@@ -1,9 +1,43 @@
-# Read replicas and failover-follow
+# Read replicas, failover and switchover
 
-> Technical reference. Status: **Postgres and MySQL**. Oracle and SQL Server replicas are accepted in
-> the config but never used for reads, and are not monitored for failover, until their lag/role probes
-> exist. Failover has two modes: `follow` (a promotion made by your database's own HA
-> tooling is followed) and `promote` (Warp itself promotes a replica, behind the safeguards below).
+> Technical reference for read replicas, failover (`follow` and `promote`), planned switchover, rejoin, split-brain guards and the
+> relay-mode reader port, on **Postgres, MySQL, SQL Server and Oracle**. Failover has two modes: `follow` (a promotion made by your
+> database's own HA tooling is followed) and `promote` (Warp itself promotes a replica, behind the safeguards below).
+> Related: sharded writes, slot rebalancing and how they behave next to replicas and failover are in [WARP_GUIDE.md](WARP_GUIDE.md) §8
+> (the sharding bullets, "Slot sharding and online rebalancing"); which protocol and backend does what is in
+> [PROTOCOLS_AND_BACKENDS.md](PROTOCOLS_AND_BACKENDS.md).
+
+## Start here: what works on which engine, and how far it was verified
+
+**Live** means it ran against a real server of that engine in this project's tests; **Probe only** means the individual queries were run live but
+not the whole feature through Warp; **Fake only** means a scripted stand-in for the database, never the real thing; **Not run** means no test
+touched it; **n/a** means the engine has no such mode.
+
+| Capability | Postgres | MySQL | SQL Server (availability group) | Oracle (Data Guard) |
+|---|---|---|---|---|
+| Read replicas with lag-aware routing | Live | Live | Live | Not run (role and lag logic unit-tested only) |
+| Failover-follow (Warp follows a promotion made elsewhere) | Live | Live | Live | Not run |
+| Promote mode (Warp promotes; lease and majority) | Live | Live | Live | Opt-in, **fake only** |
+| Planned switchover | Live | Live | Live | Opt-in, **fake only** |
+| Rejoin a returned old primary | Live (rebuild command, `pg_rewind`) | Live | Live (restart command) | Command-based, **fake only** |
+| Replica veto: a standby that still hears the primary blocks promotion | Live | Live | Live | No (no evidence is ever reported) |
+| Freeze a stale, still-writable old primary | Live | Live | Live | Live on Oracle Free (restricted session); no Data Guard involved |
+| Write fence (`WARP_WRITE_FENCE`; engine independent) | Live | Live | Live | Not run |
+| Read-your-writes by log position (`WARP_READ_YOUR_WRITES`) | Live, end to end | Probe only | Probe only | Not run |
+| Multi-shard writes atomic by two-phase commit | Live | Live | Fallback only (no XA in a stock Linux container) | Live (needs the XA grants) |
+| Slot rebalancing, conversion and auto-balancer | Live | Live | Live | Live |
+| Rebalancing while a shard fails over, with replicas serving reads | Live | Not run | Not run | Not run |
+| Relay reader port; the relay's main port follows a failover | n/a (no relay mode) | Live | Stand-in server only | Stand-in server only |
+| Fencers for `WARP_FAILOVER_REQUIRE_FENCE` (command, webhook, SSH, exec) | Live (webhook) | Not run | Not run | Not run |
+
+Reading it honestly: **Postgres and MySQL are the engines this has been used and tested on most; SQL Server is verified through
+the same live scenarios; Oracle's own failover and switchover, and every rejoin path that needs the host, have never run against a real Data
+Guard** (none was available). Treat every "Fake only" row as unproven and rehearse it in staging.
+
+**Where each part is described:** replica routing and read-your-writes under *Read routing*; failover modes and promotion under *Failover-follow* and
+*Promote mode*; planned switchover, repointing and rejoin under their own headings; fencing, the write fence and the config-freshness guard under
+*Split-brain guards*; the relay reader port under *Reader port for Relay mode*; engine specifics under *MySQL*, *Oracle Data Guard* and
+*SQL Server Availability Groups*; and the tests that produced the "Live" entries under *Running the live tests*.
 
 ## Configuring replicas
 
