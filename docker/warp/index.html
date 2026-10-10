@@ -315,10 +315,43 @@
         gap.
       </p>
       <p class="rttNote">
-        <b>What sharding doesn't do:</b> there's no elastic/online resharding anywhere — changing
-        the shard set doesn't migrate data, queues, or documents already placed under the old set.
-        Consistent hashing minimizes what <i>would</i> need to move; nothing moves it
-        automatically today.
+        <b>Writes that span shards are atomic where the shards can do two-phase commit.</b> An
+        <code>UPDATE</code> or <code>DELETE</code> that cannot be pinned to one shard, and a
+        multi-row <code>INSERT</code> whose rows belong to different shards (Warp cuts it into one
+        <code>INSERT</code> per shard), get one XA branch per shard and are prepared and committed
+        together with a durable recovery log, so either every shard applies the write or none does
+        &mdash; also inside a client transaction. Where the shards cannot (Postgres with
+        <code>max_prepared_transactions=0</code>, Oracle without the XA grants, SQL Server without the
+        XA procedures) Warp falls back, with a warning, to rolling every shard back if any rejects
+        the statement and then committing them one after another; a failure during that last loop can
+        leave some shards committed, and <code>WARP_SHARD_WRITE_2PC=required</code> refuses instead.
+        Checked live on Postgres, MySQL and Oracle (two-phase) and SQL Server (the fallback).
+      </p>
+      <p class="rttNote">
+        <b>Online rebalancing for slot-sharded tables.</b> The <code>slots</code> strategy hashes a
+        key to one of a fixed number of slots and assigns slots to shards, so adding a shard moves
+        whole slots instead of re-hashing every key. A move holds writes only to the slots being
+        moved, copies their rows through a staging table, checks the copy (row counts and a checksum
+        from a second scan), switches the map in one config change, and deletes the old copies while
+        scatter reads of that table wait, so no row is ever seen twice. It waits for the target's
+        and the sources' replicas to catch up before reads can reach them, refuses to start or switch
+        while a shard's primary is changing, and cleans up after itself: a failed move is undone, and
+        a killed Warp's move is finished by another instance once its lease lapses. An existing
+        <code>hash</code> table converts to slots without moving a row, and an optional balancer
+        (<code>WARP_AUTO_REBALANCE=true</code>) moves slots to even out row counts. The hold is
+        cluster-wide when several Warp instances share the control plane. Run live, with writers
+        running and a scatter count checked throughout, on Postgres, MySQL, SQL Server and Oracle.
+        <b>Honest limits:</b> it balances row counts, not query load; it copies with plain JDBC, so
+        identity/generated columns that refuse explicit values and exotic types are not supported;
+        writes to the moving slots wait for the copy; the cluster-wide hold needs the Postgres
+        control plane; and it is not a distributed database that rebalances by itself the way
+        CockroachDB does.
+      </p>
+      <p class="rttNote">
+        <b>What sharding doesn't do:</b> online rebalancing covers SQL tables declared with the
+        slots strategy. Hash tables convert to slots in place; a consistent-hash, list, range or
+        date table, and the DynamoDB, MongoDB, SQS and OpenSearch stores, still don't migrate data
+        already placed under the old shard set &mdash; changing their shard set moves nothing.
       </p>
       </details>
 
@@ -329,7 +362,7 @@
       <p class="rttNote">
         By default, orawire/mywire/mssqlwire all translate the client's SQL into Postgres dialect
         and run it against real Postgres — that's the whole point of the shared pipeline described
-        under "Architecture" above. Setting <code>WARP_ORACLE_BACKEND_MODE=native</code>,
+        under "Architecture" above. Setting <code>WARP_ORACLE_BACKEND_MODE=relay</code>,
         <code>WARP_MYWIRE_BACKEND=mysql</code>, or <code>WARP_MSSQLWIRE_BACKEND=sqlserver</code>
         switches that one protocol to the opposite mode instead: no translation at all, statements
         proxy straight through to a real Oracle, MySQL, or SQL Server backend of your own,
@@ -368,7 +401,7 @@
         has: it only sees writes that go through Warp, not ones made directly against the backend
         by another client. Sharding stays single-backend per native session — there's no
         multi-shard fan-out across several native Oracle/MySQL/SQL Server targets yet, the way
-        there is across several named Postgres backends. <code>WARP_ORACLE_BACKEND_MODE=native</code>
+        there is across several named Postgres backends. <code>WARP_ORACLE_BACKEND_MODE=relay</code>
         (orawire) and native-mode MCP are not yet wired into the shared pipeline this way — they
         still bypass it entirely for every statement, with only connection ACL (CIDR allow/deny,
         enforced at TCP accept time) and the connection pool itself applying, same as before. A
@@ -377,7 +410,17 @@
         the client-facing and backend-facing connection counts are deliberately decoupled for every
         protocol, native mode included.
       </p>
-      </details>
+            <p class="rttNote">
+        <b>Replicas and failover in relay mode.</b> A relay forwards bytes without parsing them, so it
+        cannot tell a read from a write. Set <code>WARP_&lt;ORACLE|MYWIRE|MSSQLWIRE&gt;_RELAY_BACKEND</code>
+        to a configured backend and the main relay port connects each new session to that backend's
+        current primary, following a failover; add <code>..._RELAY_READ_PORT</code> and clients that
+        dial that port are relayed to a lag-eligible replica (falling back to the primary, or refused,
+        as configured). Sessions already open are not moved, and there is no read-your-writes on the
+        reader port. Verified live for MySQL; Oracle and SQL Server use the same code and were tested
+        with stand-in servers only.
+      </p>
+</details>
 
       <h3 class="subhead" id="sqs-enqueue-dequeue">SQS: enqueue vs. dequeue<a class="permalink" href="#sqs-enqueue-dequeue" aria-label="Link to this section">#</a></h3>
       <p class="rttNote">
@@ -855,7 +898,10 @@
         <li><span class="uc-body"><span class="uc-title">Planned switchover</span><span class="uc-desc"><code>POST /api/backends/{name}/drain</code> stops routing new statements to a backend in favor of a configured fallback (a same-region replica or another region's backend — the mechanism doesn't distinguish the two), then waits (bounded by <code>graceMs</code>) for its connection pool to empty before closing it. It also waits for the fallback to reach real zero replication lag before reporting success — a planned window has no outage forcing an immediate cutover, so it actually waits for a clean one. Refuses (409) to drain a backend with any unresolved in-doubt XA transaction against it, and fans the call out to every other node in the cluster (not just whichever one received the HTTP request) so a switchover is genuinely cluster-wide, not single-node.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Unplanned failover</span><span class="uc-desc">A background prober re-checks every backend's connectivity (<code>WARP_BACKEND_HEALTH_CHECK_SECONDS</code>, default 15s) and automatically redirects new statements to a backend's fallback the moment it stops responding — no operator, no admin call. Set <code>WARP_FAILOVER_MAX_LAG_SECONDS</code> to name the replication lag (the data loss) you're willing to accept from an outage nobody scheduled; exceeding it doesn't block the failover — refusing to redirect would only trade a bounded loss for a total outage — but it does log loudly, exactly what a real alert should page on.</span></span></li>
         <li><span class="uc-body"><span class="uc-title">Crash-safe recovery, even after a switchover</span><span class="uc-desc">An in-doubt two-phase-commit branch records the exact backend (jdbc URL, user, password) it was prepared against, not just its name — so if that name gets repointed to a different physical target between the crash and the next restart (a switchover, a credential rotation, a config edit), startup recovery still reconnects to where the branch actually lives, not wherever the name currently resolves to.</span></span></li>
-      </ul>
+        <li><span class="uc-body"><span class="uc-title">Read replicas, honestly routed</span><span class="uc-desc">A read goes to a replica only when it is a plain read, the session holds no connection state, and the replica is within its lag allowance; with <code>WARP_READ_YOUR_WRITES=true</code> a session's reads also wait until a replica has applied that session's last write (compared by log position on Postgres, MySQL, SQL Server and Oracle &mdash; end to end through Warp on Postgres, the position checks themselves live on MySQL and SQL Server, Oracle not run). Native Oracle/MySQL/SQL Server relay mode, which cannot route per statement, gets a separate reader port that relays each connection to a lag-eligible replica, and its main port follows a failover.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Promotion with split-brain guards</span><span class="uc-desc">Warp can promote a replica itself (Postgres, MySQL, SQL Server; Oracle only with explicit opt-in) but only with a lease in the control plane, a majority of Warp instances seeing the primary down, a replica that still hears from the primary vetoing it, and the optional external fence succeeding. A stale old primary is frozen over SQL, instances that missed a config change catch up on the next poll (or within a second with the write fence), and <code>WARP_WRITE_FENCE=true</code> refuses writes from an instance that has not applied the newest config. <code>WARP_FAILOVER_REQUIRE_FENCE=true</code> refuses to promote unless a fencer (command, webhook, SSH or exec &mdash; for example <code>aws ec2 stop-instances</code>) has stopped the old primary. Live on Postgres, MySQL and SQL Server; the Oracle freeze (restricted session) was checked on Oracle Free, but Warp-driven Oracle promotion and rejoin have only run against a scripted fake, never a real Data Guard.</span></span></li>
+        <li><span class="uc-body"><span class="uc-title">Planned switchover and rejoin</span><span class="uc-desc">An operator-requested switchover waits for the target to catch up, swaps the roles and brings the old primary back as a replica (Postgres, MySQL and SQL Server; Oracle opt-in, unverified). A returned old primary is rejoined by Warp where the engine allows it, or reported as needing a rebuild with the exact steps.</span></span></li>
+</ul>
       <p class="rttNote">
         <b>Every wire protocol participates — Postgres, SQL Server, MySQL, Oracle, MongoDB,
         DynamoDB, SQS, and OpenSearch alike.</b> Drain/undrain, fallback redirection, and
