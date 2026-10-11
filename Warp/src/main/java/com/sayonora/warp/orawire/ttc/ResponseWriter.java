@@ -86,7 +86,8 @@ public final class ResponseWriter {
         for (int i = 0; i < columns.size(); i++) {
             ColumnMetadata col = columns.get(i);
             if (nativeOciColumnFormat && (col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_NUMBER
-                    || col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR)) {
+                    || col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR
+                    || col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_DATE)) {
                 writeColumnMetadataNativeOci(w, col, i, i == columns.size() - 1 && columns.size() > 1);
             } else {
                 writeColumnMetadata(w, col, i);
@@ -215,6 +216,13 @@ public final class ResponseWriter {
         byte[] prefix = (col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR
                 ? NATIVE_OCI_COLUMN_PREFIX_VARCHAR
                 : NATIVE_OCI_COLUMN_PREFIX_NUMBER).clone();
+        if (col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_DATE) {
+            // A real DATE column's block is the NUMBER block with three bytes different (type 12, no -127 scale marker, 1 where NUMBER has its size
+            // hint), found by diffing a real Oracle's response to "select sysdate" against its response to "select 1"
+            prefix[1] = (byte) TtcConstants.ORA_TYPE_NUM_DATE;
+            prefix[4] = 0;
+            prefix[5] = 1;
+        }
         if (col.oraTypeNum == TtcConstants.ORA_TYPE_NUM_VARCHAR) {
             // Real bug, found live: both offsets are 4-byte little-endian fields (confirmed by the
             // captured template itself holding "14 00 00 00" = 20 at both, the original capture's
@@ -400,7 +408,19 @@ public final class ResponseWriter {
             return;
         }
         if (dblinkClient && columns.size() > 1 && allowMultiColumnRowPrefix) {
-            w.writeRaw(NATIVE_OCI_ROW_PREFIX);
+            // The prefix's first byte is the number of bytes after it (the other three prefix bytes plus every encoded value): a real Oracle
+            // sent 8 for the row (2, 'y') and 10 for (2, 'two'). It used to be a constant 10, so a fetched row of any other length desynced the
+            // client, which then waited forever (a second row holding a one-character string hung SQL*Plus).
+            TtcWriter valueWriter = new TtcWriter();
+            for (int i = 0; i < columns.size(); i++) {
+                writeColumnValue(valueWriter, columns.get(i), values[i]);
+            }
+            byte[] encodedValues = valueWriter.toByteArray();
+            byte[] prefix = NATIVE_OCI_ROW_PREFIX.clone();
+            prefix[0] = (byte) (prefix.length - 1 + encodedValues.length);
+            w.writeRaw(prefix);
+            w.writeRaw(encodedValues);
+            return;
         }
         for (int i = 0; i < columns.size(); i++) {
             writeColumnValue(w, columns.get(i), values[i]);
@@ -653,17 +673,33 @@ public final class ResponseWriter {
         "BAEAAADfAAECAAAAewUAAAAABQAAAAMAIAAAAAMgAQAABAAAuZIAAAEAAAAAAAAAABYAAAAAAAA2AQAAAAAAAAAAAAAAAAAA0PpJ9nD0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAewUAAAIAAAAAAAAAAwAAAAAAAAAZT1JBLTAxNDAzOiBubyBkYXRhIGZvdW5kCh0=");
 
     public static void writeFetchLastRowResponseNativeOci(TtcWriter w, List<ColumnMetadata> columns, Object[] values) {
-        w.writeRaw(NATIVE_OCI_FETCH_LAST_ROW_PREFIX);
+        byte[] head = NATIVE_OCI_FETCH_LAST_ROW_PREFIX.clone();
+        if (columns.size() == 1) {
+            // a real Oracle's single-column last-row response starts 06 01 02 94 01 00 (the second byte varied per run: 94, 93, 83), where
+            // the two-column capture this template came from has 06 01 1a 00 02 00
+            head[2] = 0x02;
+            head[3] = (byte) 0x94;
+            head[4] = 0x01;
+            head[5] = 0x00;
+        }
+        w.writeRaw(head);
         w.writeUint8(TtcConstants.MSG_TYPE_ROW_DATA);
         // NATIVE_OCI_ROW_PREFIX only confirmed (both here and at writeRowNativeOci's own, separate
         // call site) for a 2+-column row -- not yet captured for a single-column FETCH-continuation
         // to know whether it applies there too, so scoped the same conservative way.
-        if (columns.size() > 1) {
-            w.writeRaw(NATIVE_OCI_ROW_PREFIX);
-        }
+        TtcWriter valueWriter = new TtcWriter();
         for (int i = 0; i < columns.size(); i++) {
-            writeColumnValue(w, columns.get(i), values[i]);
+            writeColumnValue(valueWriter, columns.get(i), values[i]);
         }
+        byte[] encodedValues = valueWriter.toByteArray();
+        if (columns.size() > 1) {
+            // the first prefix byte is the count of bytes after it (see writeRowNativeOci); it used to be a constant 10, right only for a row
+            // whose encoded values are 7 bytes long, so any other row (a one-character string, say) left the client waiting forever
+            byte[] prefix = NATIVE_OCI_ROW_PREFIX.clone();
+            prefix[0] = (byte) (prefix.length - 1 + encodedValues.length);
+            w.writeRaw(prefix);
+        }
+        w.writeRaw(encodedValues);
         w.writeRaw(NATIVE_OCI_FETCH_LAST_ROW_SUFFIX);
     }
 
