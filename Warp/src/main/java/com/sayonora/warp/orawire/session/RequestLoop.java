@@ -479,7 +479,10 @@ public final class RequestLoop {
                     e.getMessage() == null ? "statement could not be translated" : e.getMessage(), openCursorId, callNumber);
         } catch (SQLException e) {
             log.warn("backend error executing statement: {}", e.getMessage());
-            int nativeError = SqlStateErrorMapper.toOracleError(e.getSQLState(), e.getMessage());
+            // A real Oracle behind Bridge mode already says which ORA error it is; mapping its SQLSTATE (42000 for many different errors) to
+            // one code turned ORA-02019 (unknown database link) into ORA-00942. Only a Postgres-backed error needs the SQLSTATE mapping.
+            boolean realOracleError = e.getErrorCode() > 0 && e.getMessage() != null && e.getMessage().startsWith("ORA-");
+            int nativeError = realOracleError ? e.getErrorCode() : SqlStateErrorMapper.toOracleError(e.getSQLState(), e.getMessage());
             failedStatementLog.record(SourceDialect.ORACLE, lastSqlText,
                     FailedStatementLog.FailureType.BACKEND_ERROR, e.getSQLState(), nativeError, e.getMessage());
             rollbackAfterStatementError();
@@ -489,6 +492,7 @@ public final class RequestLoop {
             // records Postgres's own raw message, since that's the more useful text for debugging
             // the real backend failure.
             String clientMessage = e.getMessage() == null ? "backend error"
+                    : realOracleError ? e.getMessage()
                     : DialectErrorMessages.render(SourceDialect.ORACLE, e.getSQLState(), e.getMessage());
             if (usedNativeOciExecuteFallback && !nativeOciDblinkClient) {
                 ResponseWriter.writeErrorEndNativeOci(w, nativeError, stripJdbcHelpLink(clientMessage));
@@ -1656,7 +1660,7 @@ public final class RequestLoop {
                 // created."/etc.) is driven by that response content, not decided client-side from
                 // the SQL it sent -- reusing the CREATE shape for everything is exactly why every
                 // statement type printed "Table created." regardless of what it actually was.
-                w.writeRaw(nativeOciDdlDmlSuccessResponseFor(request.sqlText));
+                w.writeRaw(nativeOciDdlDmlSuccessResponseFor(request.sqlText, totalUpdateCount));
             } else {
                 ResponseWriter.writeSuccessEnd(w, totalUpdateCount, openCursorId, callNumber);
             }
@@ -1681,7 +1685,18 @@ public final class RequestLoop {
     private static final byte[] NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_UPDATE = java.util.Base64.getDecoder().decode(
         "CAYA8ngiAAAAAAACAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAEAgAAAJcAAQEAAAAAAAAAAAACAAcABgAAAAAAASABAAAAAACpkgAAAAAAAAAAAAAAEQAAAQAAADYBAAAAAAAAAAAAAAAAAADQKpQgWPkAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAGAAAAAAAAAA0ADQEAASABAAAAAJKpAAAd");
 
-    private static byte[] nativeOciDdlDmlSuccessResponseFor(String sqlText) {
+    // DELETE and ROLLBACK, each captured from a real Oracle in its own right (a real DELETE answers with its own statement-type bytes, not
+    // UPDATE's, so the client printed "1 row updated." for a delete; ROLLBACK printed "Table created." from the default below)
+    private static final byte[] NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_DELETE = java.util.Base64.getDecoder().decode(
+        "CAYAnMkgAAAAAAAFAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAEAgAAAL0AAQEAAAAAAAAAAAAFAAwABwAAAAAASh4BAAAAAACxkAAAAQAAAAAAAAAAFwAAAQAAADYBAAAAAAAAAAAAAAAAAADQyip5f/AAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAHAAAAAAAAAA0ADQEAAR5KAAAAAJCxAAEd");
+    private static final byte[] NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_ROLLBACK = java.util.Base64.getDecoder().decode(
+        "CAYAn8kgAAAAAAAHAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAEBQABAMMAAQAAAAAAAAAAAAAHAAAALQAAAAAASh4BAAAEAACxkAAAAwAAAAAAAAAAHQAAAAAAADYBAAAAAAAAAAAAAAAAAADQyip5f/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAtAAAAAAAAAB0=");
+
+    /** Where a DML response carries "rows affected" (a 4-byte little-endian count, in two places), found by comparing real responses to 1, 2, 3, 5, 300 and 70000 rows. */
+    private static final int NATIVE_OCI_ROW_COUNT_OFFSET_A = 43;
+    private static final int NATIVE_OCI_ROW_COUNT_OFFSET_B = 171;
+
+    private static byte[] nativeOciDdlDmlSuccessResponseFor(String sqlText, long rowCount) {
         if (sqlText == null) {
             return NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_CREATE;
         }
@@ -1692,13 +1707,33 @@ public final class RequestLoop {
         if (trimmed.regionMatches(true, 0, "COMMIT", 0, 6)) {
             return NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_COMMIT;
         }
+        if (trimmed.regionMatches(true, 0, "ROLLBACK", 0, 8)) {
+            return NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_ROLLBACK;
+        }
+        byte[] template;
         if (trimmed.regionMatches(true, 0, "INSERT", 0, 6)) {
-            return NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_INSERT;
+            template = NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_INSERT;
+        } else if (trimmed.regionMatches(true, 0, "UPDATE", 0, 6)) {
+            template = NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_UPDATE;
+        } else if (trimmed.regionMatches(true, 0, "DELETE", 0, 6)) {
+            template = NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_DELETE;
+        } else {
+            return NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_CREATE;
         }
-        if (trimmed.regionMatches(true, 0, "UPDATE", 0, 6) || trimmed.regionMatches(true, 0, "DELETE", 0, 6)) {
-            return NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_UPDATE;
+        return withRowCount(template, rowCount);
+    }
+
+    /** A copy of a DML response template with its two "rows affected" fields set. Without this every INSERT/UPDATE/DELETE reported one row. */
+    static byte[] withRowCount(byte[] template, long rowCount) {
+        byte[] copy = template.clone();
+        int n = (int) Math.max(0, Math.min(rowCount, Integer.MAX_VALUE));
+        for (int offset : new int[] {NATIVE_OCI_ROW_COUNT_OFFSET_A, NATIVE_OCI_ROW_COUNT_OFFSET_B}) {
+            copy[offset] = (byte) n;
+            copy[offset + 1] = (byte) (n >>> 8);
+            copy[offset + 2] = (byte) (n >>> 16);
+            copy[offset + 3] = (byte) (n >>> 24);
         }
-        return NATIVE_OCI_DDL_DML_SUCCESS_RESPONSE_CREATE;
+        return copy;
     }
 
     /** True for a PL/SQL anonymous block -- {@code BEGIN ... END;} or {@code DECLARE ... END;} --
