@@ -2061,6 +2061,7 @@ public final class MetricsServer {
                         .orElseGet(WarpConfig::fromEnvDefaults);
                 java.util.List<com.sayonora.warp.mcp.McpEndpoints.Endpoint> all =
                         new java.util.ArrayList<>(com.sayonora.warp.mcp.McpEndpoints.parse(current.mcpEndpoints()));
+                java.util.List<com.sayonora.warp.mcp.McpEndpoints.Endpoint> before = java.util.List.copyOf(all);
                 java.time.Instant now = clock.instant();
                 if (id == null && "GET".equals(method)) {
                     com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
@@ -2115,7 +2116,7 @@ public final class MetricsServer {
                         created = created.withUpstreamIds(ids);
                     }
                     all.add(created);
-                    writeMcpEndpoints(configStore, all);
+                    writeMcpEndpoints(configStore, before, all);
                     JsonObject out = com.sayonora.warp.mcp.McpEndpoints.view(created, now);
                     out.addProperty("token", token);
                     out.addProperty("mcpPort", parseIntEnvOr("WARP_MCP_PORT", 18010));
@@ -2156,7 +2157,7 @@ public final class MetricsServer {
                     }
                     if ("DELETE".equals(method)) {
                         all.remove(idx);
-                        writeMcpEndpoints(configStore, all);
+                        writeMcpEndpoints(configStore, before, all);
                         response.setStatus(HttpServletResponse.SC_OK);
                         response.getWriter().write("{\"revoked\":true,\"id\":" + jsonString(id) + "}");
                         return;
@@ -2184,7 +2185,7 @@ public final class MetricsServer {
                             e = e.withUpstreamIds(ids);
                         }
                         all.set(idx, e);
-                        writeMcpEndpoints(configStore, all);
+                        writeMcpEndpoints(configStore, before, all);
                         response.setStatus(HttpServletResponse.SC_OK);
                         response.getWriter().write(com.sayonora.warp.mcp.McpEndpoints.view(e, now).toString());
                         return;
@@ -2294,6 +2295,7 @@ public final class MetricsServer {
                         .orElseGet(WarpConfig::fromEnvDefaults);
                 java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> all =
                         new java.util.ArrayList<>(com.sayonora.warp.mcp.upstream.McpUpstream.parse(current.mcpUpstreams()));
+                java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> before = java.util.List.copyOf(all);
                 java.time.Instant now = clock.instant();
                 if (id == null && "GET".equals(method)) {
                     com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
@@ -2347,7 +2349,7 @@ public final class MetricsServer {
                             optionalString(body, "oauthScope"), null, null, null,
                             "unknown", null, 0, now, now);
                     all.add(created);
-                    writeMcpUpstreams(configStore, all);
+                    writeMcpUpstreams(configStore, before, all);
                     response.setStatus(HttpServletResponse.SC_CREATED);
                     response.getWriter().write(created.view().toString());
                     return;
@@ -2372,7 +2374,7 @@ public final class MetricsServer {
                     }
                     if ("DELETE".equals(method)) {
                         all.remove(idx);
-                        writeMcpUpstreams(configStore, all);
+                        writeMcpUpstreams(configStore, before, all);
                         if (mcpServer != null) {
                             mcpServer.upstreams().invalidate(id);
                         }
@@ -2409,7 +2411,7 @@ public final class MetricsServer {
                                 u.oauthAccessTokenEncrypted(), u.oauthRefreshTokenEncrypted(), u.oauthTokenExpiresAt(),
                                 u.healthStatus(), u.lastError(), u.discoveredToolCount(), u.createdAt(), clock.instant());
                         all.set(idx, updated);
-                        writeMcpUpstreams(configStore, all);
+                        writeMcpUpstreams(configStore, before, all);
                         if (mcpServer != null) {
                             mcpServer.upstreams().invalidate(id);
                         }
@@ -2442,6 +2444,7 @@ public final class MetricsServer {
                         .orElseGet(WarpConfig::fromEnvDefaults);
                 java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> all =
                         new java.util.ArrayList<>(com.sayonora.warp.mcp.upstream.McpUpstream.parse(current.mcpUpstreams()));
+                java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> before = java.util.List.copyOf(all);
                 int idx = indexOfUpstream(all, id);
                 if (idx < 0) {
                     response.setStatus(HttpServletResponse.SC_NOT_FOUND);
@@ -2455,7 +2458,7 @@ public final class MetricsServer {
                 com.sayonora.warp.mcp.upstream.McpUpstream updated = u.withHealth(
                         result.ok() ? "ok" : "error", result.error(), result.toolCount(), now);
                 all.set(idx, updated);
-                writeMcpUpstreams(configStore, all);
+                writeMcpUpstreams(configStore, before, all);
                 JsonObject out = new JsonObject();
                 out.addProperty("ok", result.ok());
                 out.addProperty("error", result.error());
@@ -2531,7 +2534,7 @@ public final class MetricsServer {
                             u.oauthScope(), u.oauthAccessTokenEncrypted(), u.oauthRefreshTokenEncrypted(),
                             u.oauthTokenExpiresAt(), u.healthStatus(), u.lastError(), u.discoveredToolCount(),
                             u.createdAt(), java.time.Clock.systemUTC().instant()));
-                    writeMcpUpstreams(configStore, updatedAll);
+                    writeMcpUpstreams(configStore, all, updatedAll);
                 }
             }
             if (authorizeUrl == null || tokenUrl == null || clientId == null) {
@@ -2579,6 +2582,7 @@ public final class MetricsServer {
                         .orElseGet(WarpConfig::fromEnvDefaults);
                 java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> all =
                         new java.util.ArrayList<>(com.sayonora.warp.mcp.upstream.McpUpstream.parse(current.mcpUpstreams()));
+                java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> before = java.util.List.copyOf(all);
                 int idx = indexOfUpstream(all, id);
                 if (idx < 0) {
                     response.setStatus(HttpServletResponse.SC_NOT_FOUND);
@@ -2595,7 +2599,7 @@ public final class MetricsServer {
                         com.sayonora.warp.secrets.FieldCipher.encrypt(tokens.refreshToken()),
                         tokens.expiresAt(), now);
                 all.set(idx, updated);
-                writeMcpUpstreams(configStore, all);
+                writeMcpUpstreams(configStore, before, all);
                 if (mcpServer != null) {
                     mcpServer.upstreams().invalidate(id);
                 }
@@ -2631,14 +2635,74 @@ public final class MetricsServer {
         return -1;
     }
 
-    private static void writeMcpUpstreams(ConfigStore configStore,
-            java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> all) throws java.sql.SQLException {
-        configStore.update(current -> current.withMcpUpstreams(all.isEmpty() ? null : com.sayonora.warp.mcp.upstream.McpUpstream.serialize(all)));
+    /**
+     * Persists {@code mine} -- the list a handler edited -- without overwriting a concurrent change to the same list. The handler
+     * read {@code before} earlier and may have made network calls since, so the edit is replayed as a diff (added, removed and
+     * changed entries by id) onto the list re-read inside {@link ConfigStore#update}'s lock.
+     */
+    static void writeMcpUpstreams(ConfigStore configStore, java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> before,
+            java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> mine) throws java.sql.SQLException {
+        configStore.update(current -> {
+            java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> merged = mergeById(before, mine,
+                    new java.util.ArrayList<>(com.sayonora.warp.mcp.upstream.McpUpstream.parse(current.mcpUpstreams())), com.sayonora.warp.mcp.upstream.McpUpstream::id,
+                    u -> "prefix:" + u.prefix().toLowerCase(java.util.Locale.ROOT), "upstream");
+            return current.withMcpUpstreams(merged.isEmpty() ? null : com.sayonora.warp.mcp.upstream.McpUpstream.serialize(merged));
+        });
     }
 
-    private static void writeMcpEndpoints(ConfigStore configStore,
-            java.util.List<com.sayonora.warp.mcp.McpEndpoints.Endpoint> all) throws java.sql.SQLException {
-        configStore.update(current -> new WarpConfig(
+    /**
+     * Replays the edit {@code before -> mine} onto {@code fresh} (the latest persisted list): entries removed or changed by the edit
+     * are removed or replaced by id, added ones appended. An entry the edit changed that was deleted meanwhile, or an added one whose
+     * {@code uniqueKey} (name/prefix) now collides with another entry, fails with an {@link IllegalStateException}.
+     */
+    static <T> java.util.List<T> mergeById(java.util.List<T> before, java.util.List<T> mine, java.util.List<T> fresh,
+            java.util.function.Function<T, String> id, java.util.function.Function<T, String> uniqueKey, String what) {
+        java.util.Map<String, T> was = new java.util.LinkedHashMap<>();
+        before.forEach(t -> was.put(id.apply(t), t));
+        java.util.Set<String> kept = new java.util.HashSet<>();
+        mine.forEach(t -> kept.add(id.apply(t)));
+        fresh.removeIf(t -> was.containsKey(id.apply(t)) && !kept.contains(id.apply(t)));
+        for (T t : mine) {
+            String tid = id.apply(t);
+            T old = was.get(tid);
+            if (old != null && old.equals(t)) {
+                continue; // untouched by this edit: keep whatever is current
+            }
+            int at = -1;
+            for (int i = 0; i < fresh.size(); i++) {
+                if (id.apply(fresh.get(i)).equals(tid)) {
+                    at = i;
+                }
+            }
+            if (old != null) {
+                if (at < 0) {
+                    throw new IllegalStateException(what + " '" + tid + "' was deleted by another change -- reload and retry");
+                }
+                fresh.set(at, t);
+            } else {
+                for (T other : fresh) {
+                    if (!id.apply(other).equals(tid) && uniqueKey.apply(other).equals(uniqueKey.apply(t))) {
+                        throw new IllegalStateException("another " + what + " with " + uniqueKey.apply(t)
+                                + " was added by a concurrent change -- reload and retry");
+                    }
+                }
+                if (at >= 0) {
+                    fresh.set(at, t);
+                } else {
+                    fresh.add(t);
+                }
+            }
+        }
+        return fresh;
+    }
+
+    private static void writeMcpEndpoints(ConfigStore configStore, java.util.List<com.sayonora.warp.mcp.McpEndpoints.Endpoint> before,
+            java.util.List<com.sayonora.warp.mcp.McpEndpoints.Endpoint> mine) throws java.sql.SQLException {
+        configStore.update(current -> {
+            java.util.List<com.sayonora.warp.mcp.McpEndpoints.Endpoint> all = mergeById(before, mine,
+                    new java.util.ArrayList<>(com.sayonora.warp.mcp.McpEndpoints.parse(current.mcpEndpoints())),
+                    com.sayonora.warp.mcp.McpEndpoints.Endpoint::id, e -> "name:" + e.name(), "endpoint");
+            return new WarpConfig(
                 current.qosRatePerSec(), current.qosBurst(), current.qosMaxWaitMs(),
                 current.qosClassLimits(), current.qosPoolWaitThreshold(),
                 current.cacheTables(), current.cacheTtlMs(),
@@ -2654,7 +2718,8 @@ public final class MetricsServer {
                 all.isEmpty() ? null : com.sayonora.warp.mcp.McpEndpoints.serialize(all),
                 current.backendStores(), current.backendSetNames(), current.connectionRoutes(),
                 current.mcpUpstreams(), current.storeFrontendSets(),
-                current.otlpExportOverride(), current.prometheusScrapeOverride(), current.accessPolicy()));
+                current.otlpExportOverride(), current.prometheusScrapeOverride(), current.accessPolicy());
+        });
     }
 
     private static int parseIntEnvOr(String name, int fallback) {
