@@ -1874,70 +1874,73 @@ public final class MetricsServer {
                 response.getWriter().write(current.toJson());
             } else if ("PUT".equals(request.getMethod())) {
                 JsonObject body = readJsonBody(request);
-                WarpConfig current = configStore.readLatest()
-                        .map(ConfigStore.Version::payload)
-                        .orElseGet(WarpConfig::fromEnvDefaults);
-                WarpConfig updated = new WarpConfig(
-                        field(body, "qosRatePerSec", current.qosRatePerSec()),
-                        field(body, "qosBurst", current.qosBurst()),
-                        field(body, "qosMaxWaitMs", current.qosMaxWaitMs()),
-                        field(body, "qosClassLimits", current.qosClassLimits()),
-                        field(body, "qosPoolWaitThreshold", current.qosPoolWaitThreshold()),
-                        field(body, "cacheTables", current.cacheTables()),
-                        field(body, "cacheTtlMs", current.cacheTtlMs()),
-                        field(body, "backends", current.backends()),
-                        field(body, "shardBackends", current.shardBackends()),
-                        field(body, "backendSets", current.backendSets()),
-                        field(body, "routerSchemaRules", current.routerSchemaRules()),
-                        field(body, "routerPredicateRules", current.routerPredicateRules()),
-                        field(body, "routerValueShardRules", current.routerValueShardRules()),
-                        field(body, "routerShardTables", current.routerShardTables()),
-                        field(body, "routerTableShards", current.routerTableShards()),
-                        field(body, "rollupDefinitionsYaml", current.rollupDefinitionsYaml()),
-                        field(body, "aclRules", current.aclRules()),
-                        field(body, "aclPpv2Enabled", current.aclPpv2Enabled()),
-                        field(body, "aclTrustedProxies", current.aclTrustedProxies()),
-                        field(body, "oauthIssuer", current.oauthIssuer()),
-                        field(body, "oauthAudience", current.oauthAudience()),
-                        field(body, "oauthUserIdClaim", current.oauthUserIdClaim()),
-                        field(body, "oauthRolesClaim", current.oauthRolesClaim()),
-                        field(body, "awsIamCredentials", current.awsIamCredentials()),
-                        field(body, "llmProvider", current.llmProvider()),
-                        field(body, "llmApiKey", current.llmApiKey()),
-                        field(body, "llmBaseUrl", current.llmBaseUrl()),
-                        field(body, "llmModel", current.llmModel()),
-                        field(body, "backendGroups", current.backendGroups()),
-                        field(body, "backendDescriptions", current.backendDescriptions()),
-                        field(body, "backendGroupDescriptions", current.backendGroupDescriptions()),
-                        field(body, "mcpEndpoints", current.mcpEndpoints()),
-                        field(body, "backendStores", current.backendStores()),
-                        field(body, "backendSetNames", current.backendSetNames()),
-                        field(body, "connectionRoutes", current.connectionRoutes()),
-                        field(body, "mcpUpstreams", current.mcpUpstreams()),
-                        field(body, "storeFrontendSets", current.storeFrontendSets()),
-                        field(body, "otlpExportOverride", current.otlpExportOverride()),
-                        field(body, "prometheusScrapeOverride", current.prometheusScrapeOverride()),
-                        field(body, "accessPolicy", current.accessPolicy()));
-                // Validate the pieces that have a real parser before committing a new version --
-                // fail loud on the request instead of publishing a version every listener chokes on.
-                com.sayonora.warp.acl.ClientAcl.parse(updated.aclRules());
-                com.sayonora.warp.core.ConnectionRouter.parse(updated.connectionRoutes());
-                if (updated.accessPolicy() != null && !updated.accessPolicy().isBlank()) {
-                    com.sayonora.warp.core.access.AccessPolicyYamlConfig.parse(updated.accessPolicy());
-                }
-                // enabled stores must sit on Postgres backends (Neo4j: one per set) -- same rules as
-                // the backend-set admin API, so the raw config route cannot bypass them
-                com.sayonora.warp.core.BackendSetModel.from(updated, null).validateStores();
-                // backendSets' member names are validated against the backends spec this same
-                // PUT is about to apply (not the currently-live registry) -- a request that
-                // changes both fields together (a new backend plus a set naming it) must not be
-                // rejected just because the registry hasn't reloaded yet. Native-backend-mode
-                // reserved targets (mysql-native etc.) are registered outside WARP_BACKENDS
-                // entirely, so a set naming one of those is intentionally not validatable here --
-                // it's caught for real once the live registry actually reloads this config.
-                com.sayonora.warp.core.BackendRegistry.fromConfig(updated.backends(), updated.shardBackends(),
-                        updated.backendSets(), null, java.util.Map.of());
-                long version = configStore.write(updated);
+                WarpConfig[] written = new WarpConfig[1];
+                // read-modify-write under the config advisory lock so a concurrent change (e.g. a recorded failover) is not lost
+                long version = configStore.update(current -> {
+                    WarpConfig updated = new WarpConfig(
+                            field(body, "qosRatePerSec", current.qosRatePerSec()),
+                            field(body, "qosBurst", current.qosBurst()),
+                            field(body, "qosMaxWaitMs", current.qosMaxWaitMs()),
+                            field(body, "qosClassLimits", current.qosClassLimits()),
+                            field(body, "qosPoolWaitThreshold", current.qosPoolWaitThreshold()),
+                            field(body, "cacheTables", current.cacheTables()),
+                            field(body, "cacheTtlMs", current.cacheTtlMs()),
+                            field(body, "backends", current.backends()),
+                            field(body, "shardBackends", current.shardBackends()),
+                            field(body, "backendSets", current.backendSets()),
+                            field(body, "routerSchemaRules", current.routerSchemaRules()),
+                            field(body, "routerPredicateRules", current.routerPredicateRules()),
+                            field(body, "routerValueShardRules", current.routerValueShardRules()),
+                            field(body, "routerShardTables", current.routerShardTables()),
+                            field(body, "routerTableShards", current.routerTableShards()),
+                            field(body, "rollupDefinitionsYaml", current.rollupDefinitionsYaml()),
+                            field(body, "aclRules", current.aclRules()),
+                            field(body, "aclPpv2Enabled", current.aclPpv2Enabled()),
+                            field(body, "aclTrustedProxies", current.aclTrustedProxies()),
+                            field(body, "oauthIssuer", current.oauthIssuer()),
+                            field(body, "oauthAudience", current.oauthAudience()),
+                            field(body, "oauthUserIdClaim", current.oauthUserIdClaim()),
+                            field(body, "oauthRolesClaim", current.oauthRolesClaim()),
+                            field(body, "awsIamCredentials", current.awsIamCredentials()),
+                            field(body, "llmProvider", current.llmProvider()),
+                            field(body, "llmApiKey", current.llmApiKey()),
+                            field(body, "llmBaseUrl", current.llmBaseUrl()),
+                            field(body, "llmModel", current.llmModel()),
+                            field(body, "backendGroups", current.backendGroups()),
+                            field(body, "backendDescriptions", current.backendDescriptions()),
+                            field(body, "backendGroupDescriptions", current.backendGroupDescriptions()),
+                            field(body, "mcpEndpoints", current.mcpEndpoints()),
+                            field(body, "backendStores", current.backendStores()),
+                            field(body, "backendSetNames", current.backendSetNames()),
+                            field(body, "connectionRoutes", current.connectionRoutes()),
+                            field(body, "mcpUpstreams", current.mcpUpstreams()),
+                            field(body, "storeFrontendSets", current.storeFrontendSets()),
+                            field(body, "otlpExportOverride", current.otlpExportOverride()),
+                            field(body, "prometheusScrapeOverride", current.prometheusScrapeOverride()),
+                            field(body, "accessPolicy", current.accessPolicy()));
+                    // Validate the pieces that have a real parser before committing a new version --
+                    // fail loud on the request instead of publishing a version every listener chokes on.
+                    com.sayonora.warp.acl.ClientAcl.parse(updated.aclRules());
+                    com.sayonora.warp.core.ConnectionRouter.parse(updated.connectionRoutes());
+                    if (updated.accessPolicy() != null && !updated.accessPolicy().isBlank()) {
+                        com.sayonora.warp.core.access.AccessPolicyYamlConfig.parse(updated.accessPolicy());
+                    }
+                    // enabled stores must sit on Postgres backends (Neo4j: one per set) -- same rules as
+                    // the backend-set admin API, so the raw config route cannot bypass them
+                    com.sayonora.warp.core.BackendSetModel.from(updated, null).validateStores();
+                    // backendSets' member names are validated against the backends spec this same
+                    // PUT is about to apply (not the currently-live registry) -- a request that
+                    // changes both fields together (a new backend plus a set naming it) must not be
+                    // rejected just because the registry hasn't reloaded yet. Native-backend-mode
+                    // reserved targets (mysql-native etc.) are registered outside WARP_BACKENDS
+                    // entirely, so a set naming one of those is intentionally not validatable here --
+                    // it's caught for real once the live registry actually reloads this config.
+                    com.sayonora.warp.core.BackendRegistry.fromConfig(updated.backends(), updated.shardBackends(),
+                            updated.backendSets(), null, java.util.Map.of());
+                    written[0] = updated;
+                    return updated;
+                }).orElseThrow();
+                WarpConfig updated = written[0];
                 com.sayonora.warp.telemetry.ObservabilityToggles.apply(
                         updated.otlpExportOverride(), updated.prometheusScrapeOverride());
                 response.setStatus(HttpServletResponse.SC_OK);
@@ -1989,41 +1992,47 @@ public final class MetricsServer {
                         + "}");
             } else if ("PUT".equals(request.getMethod())) {
                 JsonObject body = readJsonBody(request);
-                WarpConfig current = configStore.readLatest()
-                        .map(ConfigStore.Version::payload)
-                        .orElseGet(WarpConfig::fromEnvDefaults);
-                String newProvider = field(body, "provider", current.llmProvider());
-                if (newProvider != null && !newProvider.isBlank()
-                        && !newProvider.equalsIgnoreCase("openai")
-                        && !newProvider.equalsIgnoreCase("custom")
-                        && !newProvider.equalsIgnoreCase("none")) {
-                    throw new IllegalArgumentException("provider must be 'openai', 'custom', or 'none'");
-                }
-                // Blank/omitted apiKey keeps the currently-stored key -- the browser never has the
-                // real decrypted key to send back in the first place, so "unchanged" must be the
-                // default, not "blank it out". Only a non-blank apiKey in the body overwrites it.
-                String newApiKey = body.has("apiKey") && !optionalString(body, "apiKey").isBlank()
-                        ? optionalString(body, "apiKey")
-                        : current.llmApiKey();
-                String newBaseUrl = field(body, "baseUrl", current.llmBaseUrl());
-                String newModel = field(body, "model", current.llmModel());
-                WarpConfig updated = new WarpConfig(
-                        current.qosRatePerSec(), current.qosBurst(), current.qosMaxWaitMs(),
-                        current.qosClassLimits(), current.qosPoolWaitThreshold(),
-                        current.cacheTables(), current.cacheTtlMs(),
-                        current.backends(), current.shardBackends(), current.backendSets(),
-                        current.routerSchemaRules(), current.routerPredicateRules(),
-                        current.routerValueShardRules(), current.routerShardTables(), current.routerTableShards(),
-                        current.rollupDefinitionsYaml(),
-                        current.aclRules(), current.aclPpv2Enabled(), current.aclTrustedProxies(),
-                        current.oauthIssuer(), current.oauthAudience(), current.oauthUserIdClaim(),
-                        current.oauthRolesClaim(), current.awsIamCredentials(),
-                        newProvider, newApiKey, newBaseUrl, newModel, current.backendGroups(),
-                        current.backendDescriptions(), current.backendGroupDescriptions(), current.mcpEndpoints(),
-                        current.backendStores(), current.backendSetNames(), current.connectionRoutes(),
-                        current.mcpUpstreams(), current.storeFrontendSets(),
-                        current.otlpExportOverride(), current.prometheusScrapeOverride(), current.accessPolicy());
-                long version = configStore.write(updated);
+                WarpConfig[] written = new WarpConfig[1];
+                long version = configStore.update(current -> {
+                    String newProvider = field(body, "provider", current.llmProvider());
+                    if (newProvider != null && !newProvider.isBlank()
+                            && !newProvider.equalsIgnoreCase("openai")
+                            && !newProvider.equalsIgnoreCase("custom")
+                            && !newProvider.equalsIgnoreCase("none")) {
+                        throw new IllegalArgumentException("provider must be 'openai', 'custom', or 'none'");
+                    }
+                    // Blank/omitted apiKey keeps the currently-stored key -- the browser never has the
+                    // real decrypted key to send back in the first place, so "unchanged" must be the
+                    // default, not "blank it out". Only a non-blank apiKey in the body overwrites it.
+                    String newApiKey = body.has("apiKey") && !optionalString(body, "apiKey").isBlank()
+                            ? optionalString(body, "apiKey")
+                            : current.llmApiKey();
+                    String newBaseUrl = field(body, "baseUrl", current.llmBaseUrl());
+                    String newModel = field(body, "model", current.llmModel());
+                    WarpConfig updated = new WarpConfig(
+                            current.qosRatePerSec(), current.qosBurst(), current.qosMaxWaitMs(),
+                            current.qosClassLimits(), current.qosPoolWaitThreshold(),
+                            current.cacheTables(), current.cacheTtlMs(),
+                            current.backends(), current.shardBackends(), current.backendSets(),
+                            current.routerSchemaRules(), current.routerPredicateRules(),
+                            current.routerValueShardRules(), current.routerShardTables(), current.routerTableShards(),
+                            current.rollupDefinitionsYaml(),
+                            current.aclRules(), current.aclPpv2Enabled(), current.aclTrustedProxies(),
+                            current.oauthIssuer(), current.oauthAudience(), current.oauthUserIdClaim(),
+                            current.oauthRolesClaim(), current.awsIamCredentials(),
+                            newProvider, newApiKey, newBaseUrl, newModel, current.backendGroups(),
+                            current.backendDescriptions(), current.backendGroupDescriptions(), current.mcpEndpoints(),
+                            current.backendStores(), current.backendSetNames(), current.connectionRoutes(),
+                            current.mcpUpstreams(), current.storeFrontendSets(),
+                            current.otlpExportOverride(), current.prometheusScrapeOverride(), current.accessPolicy());
+                    written[0] = updated;
+                    return updated;
+                }).orElseThrow();
+                WarpConfig updated = written[0];
+                String newProvider = updated.llmProvider();
+                String newApiKey = updated.llmApiKey();
+                String newBaseUrl = updated.llmBaseUrl();
+                String newModel = updated.llmModel();
                 if (dialectTranslationStage != null) {
                     dialectTranslationStage.reconfigureLlm(newProvider, newApiKey, newBaseUrl, newModel);
                 }
@@ -2076,6 +2085,7 @@ public final class MetricsServer {
                         .orElseGet(WarpConfig::fromEnvDefaults);
                 java.util.List<com.sayonora.warp.mcp.McpEndpoints.Endpoint> all =
                         new java.util.ArrayList<>(com.sayonora.warp.mcp.McpEndpoints.parse(current.mcpEndpoints()));
+                java.util.List<com.sayonora.warp.mcp.McpEndpoints.Endpoint> before = java.util.List.copyOf(all);
                 java.time.Instant now = clock.instant();
                 if (id == null && "GET".equals(method)) {
                     com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
@@ -2130,7 +2140,7 @@ public final class MetricsServer {
                         created = created.withUpstreamIds(ids);
                     }
                     all.add(created);
-                    writeMcpEndpoints(configStore, current, all);
+                    writeMcpEndpoints(configStore, before, all);
                     JsonObject out = com.sayonora.warp.mcp.McpEndpoints.view(created, now);
                     out.addProperty("token", token);
                     out.addProperty("mcpPort", parseIntEnvOr("WARP_MCP_PORT", 18010));
@@ -2171,7 +2181,7 @@ public final class MetricsServer {
                     }
                     if ("DELETE".equals(method)) {
                         all.remove(idx);
-                        writeMcpEndpoints(configStore, current, all);
+                        writeMcpEndpoints(configStore, before, all);
                         response.setStatus(HttpServletResponse.SC_OK);
                         response.getWriter().write("{\"revoked\":true,\"id\":" + jsonString(id) + "}");
                         return;
@@ -2199,7 +2209,7 @@ public final class MetricsServer {
                             e = e.withUpstreamIds(ids);
                         }
                         all.set(idx, e);
-                        writeMcpEndpoints(configStore, current, all);
+                        writeMcpEndpoints(configStore, before, all);
                         response.setStatus(HttpServletResponse.SC_OK);
                         response.getWriter().write(com.sayonora.warp.mcp.McpEndpoints.view(e, now).toString());
                         return;
@@ -2309,6 +2319,7 @@ public final class MetricsServer {
                         .orElseGet(WarpConfig::fromEnvDefaults);
                 java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> all =
                         new java.util.ArrayList<>(com.sayonora.warp.mcp.upstream.McpUpstream.parse(current.mcpUpstreams()));
+                java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> before = java.util.List.copyOf(all);
                 java.time.Instant now = clock.instant();
                 if (id == null && "GET".equals(method)) {
                     com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
@@ -2362,7 +2373,7 @@ public final class MetricsServer {
                             optionalString(body, "oauthScope"), null, null, null,
                             "unknown", null, 0, now, now);
                     all.add(created);
-                    writeMcpUpstreams(configStore, current, all);
+                    writeMcpUpstreams(configStore, before, all);
                     response.setStatus(HttpServletResponse.SC_CREATED);
                     response.getWriter().write(created.view().toString());
                     return;
@@ -2387,7 +2398,7 @@ public final class MetricsServer {
                     }
                     if ("DELETE".equals(method)) {
                         all.remove(idx);
-                        writeMcpUpstreams(configStore, current, all);
+                        writeMcpUpstreams(configStore, before, all);
                         if (mcpServer != null) {
                             mcpServer.upstreams().invalidate(id);
                         }
@@ -2424,7 +2435,7 @@ public final class MetricsServer {
                                 u.oauthAccessTokenEncrypted(), u.oauthRefreshTokenEncrypted(), u.oauthTokenExpiresAt(),
                                 u.healthStatus(), u.lastError(), u.discoveredToolCount(), u.createdAt(), clock.instant());
                         all.set(idx, updated);
-                        writeMcpUpstreams(configStore, current, all);
+                        writeMcpUpstreams(configStore, before, all);
                         if (mcpServer != null) {
                             mcpServer.upstreams().invalidate(id);
                         }
@@ -2457,6 +2468,7 @@ public final class MetricsServer {
                         .orElseGet(WarpConfig::fromEnvDefaults);
                 java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> all =
                         new java.util.ArrayList<>(com.sayonora.warp.mcp.upstream.McpUpstream.parse(current.mcpUpstreams()));
+                java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> before = java.util.List.copyOf(all);
                 int idx = indexOfUpstream(all, id);
                 if (idx < 0) {
                     response.setStatus(HttpServletResponse.SC_NOT_FOUND);
@@ -2470,7 +2482,7 @@ public final class MetricsServer {
                 com.sayonora.warp.mcp.upstream.McpUpstream updated = u.withHealth(
                         result.ok() ? "ok" : "error", result.error(), result.toolCount(), now);
                 all.set(idx, updated);
-                writeMcpUpstreams(configStore, current, all);
+                writeMcpUpstreams(configStore, before, all);
                 JsonObject out = new JsonObject();
                 out.addProperty("ok", result.ok());
                 out.addProperty("error", result.error());
@@ -2546,7 +2558,7 @@ public final class MetricsServer {
                             u.oauthScope(), u.oauthAccessTokenEncrypted(), u.oauthRefreshTokenEncrypted(),
                             u.oauthTokenExpiresAt(), u.healthStatus(), u.lastError(), u.discoveredToolCount(),
                             u.createdAt(), java.time.Clock.systemUTC().instant()));
-                    writeMcpUpstreams(configStore, current, updatedAll);
+                    writeMcpUpstreams(configStore, all, updatedAll);
                 }
             }
             if (authorizeUrl == null || tokenUrl == null || clientId == null) {
@@ -2594,6 +2606,7 @@ public final class MetricsServer {
                         .orElseGet(WarpConfig::fromEnvDefaults);
                 java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> all =
                         new java.util.ArrayList<>(com.sayonora.warp.mcp.upstream.McpUpstream.parse(current.mcpUpstreams()));
+                java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> before = java.util.List.copyOf(all);
                 int idx = indexOfUpstream(all, id);
                 if (idx < 0) {
                     response.setStatus(HttpServletResponse.SC_NOT_FOUND);
@@ -2610,7 +2623,7 @@ public final class MetricsServer {
                         com.sayonora.warp.secrets.FieldCipher.encrypt(tokens.refreshToken()),
                         tokens.expiresAt(), now);
                 all.set(idx, updated);
-                writeMcpUpstreams(configStore, current, all);
+                writeMcpUpstreams(configStore, before, all);
                 if (mcpServer != null) {
                     mcpServer.upstreams().invalidate(id);
                 }
@@ -2646,14 +2659,74 @@ public final class MetricsServer {
         return -1;
     }
 
-    private static void writeMcpUpstreams(ConfigStore configStore, WarpConfig current,
-            java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> all) throws java.sql.SQLException {
-        configStore.write(current.withMcpUpstreams(all.isEmpty() ? null : com.sayonora.warp.mcp.upstream.McpUpstream.serialize(all)));
+    /**
+     * Persists {@code mine} -- the list a handler edited -- without overwriting a concurrent change to the same list. The handler
+     * read {@code before} earlier and may have made network calls since, so the edit is replayed as a diff (added, removed and
+     * changed entries by id) onto the list re-read inside {@link ConfigStore#update}'s lock.
+     */
+    static void writeMcpUpstreams(ConfigStore configStore, java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> before,
+            java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> mine) throws java.sql.SQLException {
+        configStore.update(current -> {
+            java.util.List<com.sayonora.warp.mcp.upstream.McpUpstream> merged = mergeById(before, mine,
+                    new java.util.ArrayList<>(com.sayonora.warp.mcp.upstream.McpUpstream.parse(current.mcpUpstreams())), com.sayonora.warp.mcp.upstream.McpUpstream::id,
+                    u -> "prefix:" + u.prefix().toLowerCase(java.util.Locale.ROOT), "upstream");
+            return current.withMcpUpstreams(merged.isEmpty() ? null : com.sayonora.warp.mcp.upstream.McpUpstream.serialize(merged));
+        });
     }
 
-    private static void writeMcpEndpoints(ConfigStore configStore, WarpConfig current,
-            java.util.List<com.sayonora.warp.mcp.McpEndpoints.Endpoint> all) throws java.sql.SQLException {
-        WarpConfig updated = new WarpConfig(
+    /**
+     * Replays the edit {@code before -> mine} onto {@code fresh} (the latest persisted list): entries removed or changed by the edit
+     * are removed or replaced by id, added ones appended. An entry the edit changed that was deleted meanwhile, or an added one whose
+     * {@code uniqueKey} (name/prefix) now collides with another entry, fails with an {@link IllegalStateException}.
+     */
+    static <T> java.util.List<T> mergeById(java.util.List<T> before, java.util.List<T> mine, java.util.List<T> fresh,
+            java.util.function.Function<T, String> id, java.util.function.Function<T, String> uniqueKey, String what) {
+        java.util.Map<String, T> was = new java.util.LinkedHashMap<>();
+        before.forEach(t -> was.put(id.apply(t), t));
+        java.util.Set<String> kept = new java.util.HashSet<>();
+        mine.forEach(t -> kept.add(id.apply(t)));
+        fresh.removeIf(t -> was.containsKey(id.apply(t)) && !kept.contains(id.apply(t)));
+        for (T t : mine) {
+            String tid = id.apply(t);
+            T old = was.get(tid);
+            if (old != null && old.equals(t)) {
+                continue; // untouched by this edit: keep whatever is current
+            }
+            int at = -1;
+            for (int i = 0; i < fresh.size(); i++) {
+                if (id.apply(fresh.get(i)).equals(tid)) {
+                    at = i;
+                }
+            }
+            if (old != null) {
+                if (at < 0) {
+                    throw new IllegalStateException(what + " '" + tid + "' was deleted by another change -- reload and retry");
+                }
+                fresh.set(at, t);
+            } else {
+                for (T other : fresh) {
+                    if (!id.apply(other).equals(tid) && uniqueKey.apply(other).equals(uniqueKey.apply(t))) {
+                        throw new IllegalStateException("another " + what + " with " + uniqueKey.apply(t)
+                                + " was added by a concurrent change -- reload and retry");
+                    }
+                }
+                if (at >= 0) {
+                    fresh.set(at, t);
+                } else {
+                    fresh.add(t);
+                }
+            }
+        }
+        return fresh;
+    }
+
+    private static void writeMcpEndpoints(ConfigStore configStore, java.util.List<com.sayonora.warp.mcp.McpEndpoints.Endpoint> before,
+            java.util.List<com.sayonora.warp.mcp.McpEndpoints.Endpoint> mine) throws java.sql.SQLException {
+        configStore.update(current -> {
+            java.util.List<com.sayonora.warp.mcp.McpEndpoints.Endpoint> all = mergeById(before, mine,
+                    new java.util.ArrayList<>(com.sayonora.warp.mcp.McpEndpoints.parse(current.mcpEndpoints())),
+                    com.sayonora.warp.mcp.McpEndpoints.Endpoint::id, e -> "name:" + e.name(), "endpoint");
+            return new WarpConfig(
                 current.qosRatePerSec(), current.qosBurst(), current.qosMaxWaitMs(),
                 current.qosClassLimits(), current.qosPoolWaitThreshold(),
                 current.cacheTables(), current.cacheTtlMs(),
@@ -2670,7 +2743,7 @@ public final class MetricsServer {
                 current.backendStores(), current.backendSetNames(), current.connectionRoutes(),
                 current.mcpUpstreams(), current.storeFrontendSets(),
                 current.otlpExportOverride(), current.prometheusScrapeOverride(), current.accessPolicy());
-        configStore.write(updated);
+        });
     }
 
     private static int parseIntEnvOr(String name, int fallback) {

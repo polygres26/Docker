@@ -53,12 +53,14 @@ public final class ObservabilityApi {
         try {
             JsonObject body = readBody(request);
             synchronized (WRITE_LOCK) {
-                WarpConfig before = configStore.readLatest()
-                        .map(ConfigStore.Version::payload)
-                        .orElseGet(WarpConfig::fromEnvDefaults);
-                String otlpOverride = boolField(body, "otlpEnabled", before.otlpExportOverride());
-                String prometheusOverride = boolField(body, "prometheusEnabled", before.prometheusScrapeOverride());
-                long version = configStore.write(before.withObservabilityOverrides(otlpOverride, prometheusOverride));
+                String[] overrides = new String[2];
+                long version = configStore.update(before -> {
+                    overrides[0] = boolField(body, "otlpEnabled", before.otlpExportOverride());
+                    overrides[1] = boolField(body, "prometheusEnabled", before.prometheusScrapeOverride());
+                    return before.withObservabilityOverrides(overrides[0], overrides[1]);
+                }).orElseThrow();
+                String otlpOverride = overrides[0];
+                String prometheusOverride = overrides[1];
                 ObservabilityToggles.apply(otlpOverride, prometheusOverride);
 
                 JsonObject out = new JsonObject();

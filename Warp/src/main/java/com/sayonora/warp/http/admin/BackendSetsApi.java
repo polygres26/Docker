@@ -397,20 +397,23 @@ public final class BackendSetsApi {
         }
         String setName = str(body, "set");
         synchronized (WRITE_LOCK) {
-            WarpConfig before = latest(configStore);
-            java.util.Map<StoreType, String> assignments =
-                    new java.util.LinkedHashMap<>(BackendRegistry.parseStoreFrontendSets(before.storeFrontendSets()));
-            if (setName == null || setName.isBlank()) {
-                assignments.remove(store);
-            } else {
-                List<String> sets = registry != null ? registry.setNames() : hypothetical(before, options).setNames();
-                if (!sets.contains(setName)) {
-                    throw new ModelException(400, "no backend set '" + setName + "' -- known sets: " + sets);
+            String[] specOut = new String[1];
+            long version = configStore.update(before -> {
+                java.util.Map<StoreType, String> assignments =
+                        new java.util.LinkedHashMap<>(BackendRegistry.parseStoreFrontendSets(before.storeFrontendSets()));
+                if (setName == null || setName.isBlank()) {
+                    assignments.remove(store);
+                } else {
+                    List<String> sets = registry != null ? registry.setNames() : hypothetical(before, options).setNames();
+                    if (!sets.contains(setName)) {
+                        throw new ModelException(400, "no backend set '" + setName + "' -- known sets: " + sets);
+                    }
+                    assignments.put(store, setName);
                 }
-                assignments.put(store, setName);
-            }
-            String spec = BackendRegistry.renderStoreFrontendSets(assignments);
-            long version = configStore.write(before.withStoreFrontendSets(spec));
+                specOut[0] = BackendRegistry.renderStoreFrontendSets(assignments);
+                return before.withStoreFrontendSets(specOut[0]);
+            }).orElseThrow();
+            String spec = specOut[0];
             if (registry != null) {
                 registry.applyStoreFrontendSets(spec);
             }
@@ -427,11 +430,10 @@ public final class BackendSetsApi {
             BackendRegistry registry, ServerOptions options) throws SQLException, IOException {
         JsonObject body = readBody(request);
         synchronized (WRITE_LOCK) {
-            WarpConfig before = latest(configStore);
-            BackendSetModel model = BackendSetModel.from(before, implicitDefault(options));
-            BackendSet s = model.addSet(str(body, "name"), str(body, "description"));
-            JsonObject out = commit(before, model, registry, configStore, options, List.of());
-            out.add("set", setJson(model, s, registry, false));
+            Committed<BackendSet> c = commit(configStore, registry, options, (before, model) ->
+                    new Edit<>(model.addSet(str(body, "name"), str(body, "description")), List.of()));
+            JsonObject out = c.out();
+            out.add("set", setJson(c.model(), c.result(), registry, false));
             write(response, 201, out);
         }
     }
@@ -440,15 +442,15 @@ public final class BackendSetsApi {
             ConfigStore configStore, BackendRegistry registry, ServerOptions options) throws SQLException, IOException {
         JsonObject body = readBody(request);
         synchronized (WRITE_LOCK) {
-            WarpConfig before = latest(configStore);
-            BackendSetModel model = BackendSetModel.from(before, implicitDefault(options));
-            BackendSetModel oldModel = BackendSetModel.from(before, implicitDefault(options));
-            BackendSet s = model.patchSet(set, body.has("description"), str(body, "description"));
-            if (body.has("name") && str(body, "name") != null && !str(body, "name").equals(set)) {
-                s = model.renameSet(set, str(body, "name"));
-            }
-            JsonObject out = commit(before, model, registry, configStore, options, List.of(), oldModel);
-            out.add("set", setJson(model, s, registry, false));
+            Committed<BackendSet> c = commit(configStore, registry, options, (before, model) -> {
+                BackendSet s = model.patchSet(set, body.has("description"), str(body, "description"));
+                if (body.has("name") && str(body, "name") != null && !str(body, "name").equals(set)) {
+                    s = model.renameSet(set, str(body, "name"));
+                }
+                return new Edit<>(s, List.of());
+            });
+            JsonObject out = c.out();
+            out.add("set", setJson(c.model(), c.result(), registry, false));
             write(response, 200, out);
         }
     }
@@ -456,10 +458,10 @@ public final class BackendSetsApi {
     private static void deleteSet(String set, HttpServletResponse response, ConfigStore configStore,
             BackendRegistry registry, ServerOptions options) throws SQLException, IOException {
         synchronized (WRITE_LOCK) {
-            WarpConfig before = latest(configStore);
-            BackendSetModel model = BackendSetModel.from(before, implicitDefault(options));
-            model.deleteSet(set);
-            JsonObject out = commit(before, model, registry, configStore, options, List.of());
+            JsonObject out = commit(configStore, registry, options, (before, model) -> {
+                model.deleteSet(set);
+                return new Edit<>(null, List.of());
+            }).out();
             out.addProperty("deleted", set);
             write(response, 200, out);
         }
@@ -472,22 +474,22 @@ public final class BackendSetsApi {
                     + "(POST /api/backend-sets/{set}/backends)");
         }
         synchronized (WRITE_LOCK) {
-            WarpConfig before = latest(configStore);
-            BackendSetModel oldModel = BackendSetModel.from(before, implicitDefault(options));
-            BackendSetModel model = BackendSetModel.from(before, implicitDefault(options));
-            Backend b = model.addBackend(set, str(body, "name"), firstNonNull(str(body, "url"), str(body, "jdbcUrl")),
-                    str(body, "user"), str(body, "password"), str(body, "fallback"), str(body, "description"),
-                    stores(body), body.has("replicas") ? replicasField(body) : null,
-                    body.has("failoverMode") ? str(body, "failoverMode") : null);
-            List<String> warnings = new ArrayList<>();
-            boolean specBlank = before.backends() == null || before.backends().isBlank();
-            String standby = System.getenv("WARP_STANDBY_HOST");
-            if (specBlank && standby != null && !standby.isBlank()) {
-                warnings.add("WARP_BACKENDS was not configured: the implicit 'default' backend was written out "
-                        + "as an explicit entry, which drops its standby/failover settings (WARP_STANDBY_*).");
-            }
-            JsonObject out = commit(before, model, registry, configStore, options, warnings, oldModel);
-            out.add("backend", backendJson(model, b, registry, false));
+            Committed<Backend> c = commit(configStore, registry, options, (before, model) -> {
+                Backend b = model.addBackend(set, str(body, "name"), firstNonNull(str(body, "url"), str(body, "jdbcUrl")),
+                        str(body, "user"), str(body, "password"), str(body, "fallback"), str(body, "description"),
+                        stores(body), body.has("replicas") ? replicasField(body) : null,
+                        body.has("failoverMode") ? str(body, "failoverMode") : null);
+                List<String> warnings = new ArrayList<>();
+                boolean specBlank = before.backends() == null || before.backends().isBlank();
+                String standby = System.getenv("WARP_STANDBY_HOST");
+                if (specBlank && standby != null && !standby.isBlank()) {
+                    warnings.add("WARP_BACKENDS was not configured: the implicit 'default' backend was written out "
+                            + "as an explicit entry, which drops its standby/failover settings (WARP_STANDBY_*).");
+                }
+                return new Edit<>(b, warnings);
+            });
+            JsonObject out = c.out();
+            out.add("backend", backendJson(c.model(), c.result(), registry, false));
             write(response, 201, out);
         }
     }
@@ -496,9 +498,7 @@ public final class BackendSetsApi {
             ConfigStore configStore, BackendRegistry registry, ServerOptions options) throws SQLException, IOException {
         JsonObject body = readBody(request);
         synchronized (WRITE_LOCK) {
-            WarpConfig before = latest(configStore);
-            BackendSetModel oldModel = BackendSetModel.from(before, implicitDefault(options));
-            BackendSetModel model = BackendSetModel.from(before, implicitDefault(options));
+            Committed<Backend> c = commit(configStore, registry, options, (before, model) -> {
             Backend existing = model.backend(name);
             if (existing == null || !existing.set().equals(set)) {
                 throw new ModelException(404, "backend '" + name + "' does not exist in backend set '" + set + "'");
@@ -513,8 +513,10 @@ public final class BackendSetsApi {
             if (body.has("set") && str(body, "set") != null && !set.equals(str(body, "set"))) {
                 b = model.moveBackend(name, str(body, "set"));
             }
-            JsonObject out = commit(before, model, registry, configStore, options, List.of(), oldModel);
-            out.add("backend", backendJson(model, b, registry, false));
+            return new Edit<>(b, List.of());
+            });
+            JsonObject out = c.out();
+            out.add("backend", backendJson(c.model(), c.result(), registry, false));
             write(response, 200, out);
         }
     }
@@ -522,41 +524,74 @@ public final class BackendSetsApi {
     private static void deleteBackend(String set, String name, HttpServletResponse response, ConfigStore configStore,
             BackendRegistry registry, ServerOptions options) throws SQLException, IOException {
         synchronized (WRITE_LOCK) {
-            WarpConfig before = latest(configStore);
-            BackendSetModel oldModel = BackendSetModel.from(before, implicitDefault(options));
-            BackendSetModel model = BackendSetModel.from(before, implicitDefault(options));
-            Backend existing = model.backend(name);
-            if (existing == null || !existing.set().equals(set)) {
-                throw new ModelException(404, "backend '" + name + "' does not exist in backend set '" + set + "'");
-            }
-            model.deleteBackend(name);
-            List<String> warnings = new ArrayList<>();
-            if (!existing.stores().isEmpty()) {
-                warnings.add("backend '" + name + "' hosted " + BackendSetModelAccess.ids(existing.stores())
-                        + ": its data is NOT deleted and stays in that database, but Warp no longer serves it; "
-                        + "the remaining hosts are re-hashed, so see rebalanceRequired");
-            }
-            JsonObject out = commit(before, model, registry, configStore, options, warnings, oldModel);
+            JsonObject out = commit(configStore, registry, options, (before, model) -> {
+                Backend existing = model.backend(name);
+                if (existing == null || !existing.set().equals(set)) {
+                    throw new ModelException(404, "backend '" + name + "' does not exist in backend set '" + set + "'");
+                }
+                model.deleteBackend(name);
+                List<String> warnings = new ArrayList<>();
+                if (!existing.stores().isEmpty()) {
+                    warnings.add("backend '" + name + "' hosted " + BackendSetModelAccess.ids(existing.stores())
+                            + ": its data is NOT deleted and stays in that database, but Warp no longer serves it; "
+                            + "the remaining hosts are re-hashed, so see rebalanceRequired");
+                }
+                return new Edit<>(null, warnings);
+            }).out();
             out.addProperty("deleted", name);
             write(response, 200, out);
         }
     }
 
-    private static JsonObject commit(WarpConfig before, BackendSetModel model, BackendRegistry registry,
-            ConfigStore configStore, ServerOptions options, List<String> warnings) throws SQLException {
-        return commit(before, model, registry, configStore, options, warnings,
-                BackendSetModel.from(before, implicitDefault(options)));
+    /** What a model edit returns: a handler-specific result (the set/backend it touched) and any warnings. */
+    private record Edit<T>(T result, List<String> warnings) {
+    }
+
+    /** The outcome of {@link #commit}: the response body so far, the edited model and the edit's result. */
+    private record Committed<T>(JsonObject out, BackendSetModel model, T result) {
+    }
+
+    private interface ModelEdit<T> {
+        Edit<T> apply(WarpConfig before, BackendSetModel model);
     }
 
     /**
-     * Validates the resulting config as a whole (the registry parser rejects dangling references),
-     * creates schema on newly-enabled (backend, store) pairs BEFORE persisting (a failure there
-     * leaves the config untouched), writes one new warp_config version, applies it locally at once
-     * (other instances pick it up over LISTEN/NOTIFY) and reports stores whose shard layout changed.
+     * Applies {@code edit} to the latest persisted config inside {@link ConfigStore#update}'s lock, so a concurrent change
+     * (such as a recorded failover) is never overwritten. The edit, the whole-config validation (the registry parser rejects
+     * dangling references), the schema creation on newly-enabled (backend, store) pairs and the shard-layout comparison all
+     * run on that latest config BEFORE it is persisted (a failure leaves the config untouched). Once a new warp_config version
+     * is written the change is applied locally at once (other instances pick it up over LISTEN/NOTIFY).
      */
-    private static JsonObject commit(WarpConfig before, BackendSetModel model, BackendRegistry registry,
-            ConfigStore configStore, ServerOptions options, List<String> warnings, BackendSetModel oldModel)
-            throws SQLException {
+    private static <T> Committed<T> commit(ConfigStore configStore, BackendRegistry registry, ServerOptions options,
+            ModelEdit<T> edit) throws SQLException {
+        Object[] captured = new Object[4]; // after, model, edit result, rebalance + warnings
+        long version = configStore.update(before -> {
+            BackendSetModel oldModel = BackendSetModel.from(before, implicitDefault(options));
+            BackendSetModel model = BackendSetModel.from(before, implicitDefault(options));
+            Edit<T> e = edit.apply(before, model);
+            JsonArray rebalance = new JsonArray();
+            WarpConfig after = validateAndPrepare(before, model, oldModel, options, rebalance);
+            captured[0] = after;
+            captured[1] = model;
+            captured[2] = e.result();
+            captured[3] = new Object[] {rebalance, e.warnings()};
+            return after;
+        }).orElseThrow();
+        @SuppressWarnings("unchecked")
+        T result = (T) captured[2];
+        WarpConfig after = (WarpConfig) captured[0];
+        Object[] tail = (Object[]) captured[3];
+        return new Committed<>(applyLocally(after, version, registry, (JsonArray) tail[0], castStrings(tail[1])),
+                (BackendSetModel) captured[1], result);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> castStrings(Object o) {
+        return (List<String>) o;
+    }
+
+    private static WarpConfig validateAndPrepare(WarpConfig before, BackendSetModel model, BackendSetModel oldModel,
+            ServerOptions options, JsonArray rebalance) {
         model.validateStores();
         WarpConfig after = model.applyTo(before);
         BackendRegistry beforeReg = hypothetical(before, options);
@@ -587,7 +622,6 @@ public final class BackendSetsApi {
             }
         }
 
-        JsonArray rebalance = new JsonArray();
         for (StoreType s : StoreType.values()) {
             List<String> was = effective(beforeReg, s);
             List<String> now = effective(afterReg, s);
@@ -606,8 +640,11 @@ public final class BackendSetsApi {
             }
         }
 
-        long version;
-        version = configStore.write(after);
+        return after;
+    }
+
+    private static JsonObject applyLocally(WarpConfig after, long version, BackendRegistry registry,
+            JsonArray rebalance, List<String> warnings) {
         if (registry != null) {
             try {
                 registry.reload(after.backends(), after.shardBackends(), after.backendSets(), after.backendGroups());
@@ -696,14 +733,28 @@ public final class BackendSetsApi {
         write(response, 200, routeJson(r, registry));
     }
 
-    /** Persists {@code routes} as a new warp_config version and applies it locally at once. */
-    private static long commitRoutes(List<ConnectionRouter.Route> routes, ConfigStore configStore,
-            BackendRegistry registry) throws SQLException {
-        registry.connectionRouter().validateAgainstRegistry(routes);
-        WarpConfig before = latest(configStore);
-        long version = configStore.write(before.withConnectionRoutes(ConnectionRouter.render(routes)));
-        registry.connectionRouter().load(ConnectionRouter.render(routes));
-        return version;
+    /**
+     * Applies {@code change} to the route list of the latest persisted config inside {@link ConfigStore#update}'s lock and
+     * persists the result as a new warp_config version, applying it locally at once. {@code change} returns the new list, or
+     * null for "no change" (it records why itself); the result is empty then.
+     */
+    private static java.util.OptionalLong commitRoutes(java.util.function.UnaryOperator<List<ConnectionRouter.Route>> change,
+            ConfigStore configStore, BackendRegistry registry) throws SQLException {
+        List<ConnectionRouter.Route>[] committed = new List[1];
+        java.util.Optional<Long> version = configStore.update(before -> {
+            List<ConnectionRouter.Route> routes = change.apply(new ArrayList<>(ConnectionRouter.parse(before.connectionRoutes())));
+            if (routes == null) {
+                return null;
+            }
+            registry.connectionRouter().validateAgainstRegistry(routes);
+            committed[0] = routes;
+            return before.withConnectionRoutes(ConnectionRouter.render(routes));
+        });
+        if (version.isEmpty()) {
+            return java.util.OptionalLong.empty();
+        }
+        registry.connectionRouter().load(ConnectionRouter.render(committed[0]));
+        return java.util.OptionalLong.of(version.get());
     }
 
     private static void addRoute(JsonObject body, HttpServletResponse response, ConfigStore configStore,
@@ -711,19 +762,23 @@ public final class BackendSetsApi {
         ConnectionRouter.Route added = ConnectionRouter.validated(str(body, "protocol"), str(body, "database"),
                 str(body, "user"), str(body, "target"), str(body, "defaultBackend"), "route");
         synchronized (WRITE_LOCK) {
-            List<ConnectionRouter.Route> routes = new ArrayList<>(reloadedRoutes(configStore, registry));
-            for (ConnectionRouter.Route r : routes) {
-                if (r.key().equals(added.key())) {
-                    error(response, 409, "a route for '" + added.key() + "' already exists");
-                    return;
+            java.util.OptionalLong version = commitRoutes(routes -> {
+                for (ConnectionRouter.Route r : routes) {
+                    if (r.key().equals(added.key())) {
+                        return null;
+                    }
                 }
+                JsonElement pos = body.get("position");
+                int at = pos == null || pos.isJsonNull() ? routes.size() : Math.max(0, Math.min(pos.getAsInt(), routes.size()));
+                routes.add(at, added);
+                return routes;
+            }, configStore, registry);
+            if (version.isEmpty()) {
+                error(response, 409, "a route for '" + added.key() + "' already exists");
+                return;
             }
-            JsonElement pos = body.get("position");
-            int at = pos == null || pos.isJsonNull() ? routes.size() : Math.max(0, Math.min(pos.getAsInt(), routes.size()));
-            routes.add(at, added);
-            long version = commitRoutes(routes, configStore, registry);
             JsonObject out = routeJson(added, registry);
-            out.addProperty("version", version);
+            out.addProperty("version", version.getAsLong());
             write(response, 201, out);
         }
     }
@@ -731,47 +786,45 @@ public final class BackendSetsApi {
     private static void patchRoute(String id, JsonObject body, HttpServletResponse response, ConfigStore configStore,
             BackendRegistry registry) throws SQLException, IOException {
         synchronized (WRITE_LOCK) {
-            List<ConnectionRouter.Route> routes = new ArrayList<>(reloadedRoutes(configStore, registry));
-            for (int i = 0; i < routes.size(); i++) {
-                ConnectionRouter.Route r = routes.get(i);
-                if (!r.key().equals(id)) {
-                    continue;
+            ConnectionRouter.Route[] changed = new ConnectionRouter.Route[1];
+            java.util.OptionalLong version = commitRoutes(routes -> {
+                for (int i = 0; i < routes.size(); i++) {
+                    ConnectionRouter.Route r = routes.get(i);
+                    if (!r.key().equals(id)) {
+                        continue;
+                    }
+                    changed[0] = ConnectionRouter.validated(r.protocol(), r.database(), r.user(),
+                            body.has("target") ? str(body, "target") : r.target(),
+                            body.has("defaultBackend") ? str(body, "defaultBackend") : r.defaultBackend(), "route");
+                    routes.set(i, changed[0]);
+                    return routes;
                 }
-                ConnectionRouter.Route changed = ConnectionRouter.validated(r.protocol(), r.database(), r.user(),
-                        body.has("target") ? str(body, "target") : r.target(),
-                        body.has("defaultBackend") ? str(body, "defaultBackend") : r.defaultBackend(), "route");
-                routes.set(i, changed);
-                long version = commitRoutes(routes, configStore, registry);
-                JsonObject out = routeJson(changed, registry);
-                out.addProperty("version", version);
-                write(response, 200, out);
+                return null;
+            }, configStore, registry);
+            if (version.isEmpty()) {
+                error(response, 404, "no connection route '" + id + "'");
                 return;
             }
-            error(response, 404, "no connection route '" + id + "'");
+            JsonObject out = routeJson(changed[0], registry);
+            out.addProperty("version", version.getAsLong());
+            write(response, 200, out);
         }
     }
 
     private static void deleteRoute(String id, HttpServletResponse response, ConfigStore configStore,
             BackendRegistry registry) throws SQLException, IOException {
         synchronized (WRITE_LOCK) {
-            List<ConnectionRouter.Route> routes = new ArrayList<>(reloadedRoutes(configStore, registry));
-            if (!routes.removeIf(r -> r.key().equals(id))) {
+            java.util.OptionalLong version = commitRoutes(
+                    routes -> routes.removeIf(r -> r.key().equals(id)) ? routes : null, configStore, registry);
+            if (version.isEmpty()) {
                 error(response, 404, "no connection route '" + id + "'");
                 return;
             }
-            long version = commitRoutes(routes, configStore, registry);
             JsonObject out = new JsonObject();
             out.addProperty("ok", true);
-            out.addProperty("version", version);
+            out.addProperty("version", version.getAsLong());
             write(response, 200, out);
         }
-    }
-
-    /** The persisted route list (the source of truth for a read-modify-write), falling back to the
-     * live one when nothing is persisted yet. */
-    private static List<ConnectionRouter.Route> reloadedRoutes(ConfigStore configStore, BackendRegistry registry)
-            throws SQLException {
-        return ConnectionRouter.parse(latest(configStore).connectionRoutes());
     }
 
     // ---- small helpers -----------------------------------------------------------------------
